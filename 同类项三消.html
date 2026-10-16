@@ -1,0 +1,2721 @@
+<!DOCTYPE html>
+<!--
+  同类项·三消 —— 初中数学「合并同类项」课堂小游戏
+  单文件版：双击即可在 Windows / macOS 上用浏览器打开，无需联网、无需安装。
+  源码：src/engine.js（数学与发牌）+ src/game.js（界面），由 tools/build.mjs 合并生成。
+  改动源码后请重新运行：node tools/build.mjs
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>同类项 · 三消｜初中数学小游戏</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23203a3a'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' font-family='Georgia,serif' fill='%23f4ead8'%3Ex%3C/text%3E%3Ccircle cx='24' cy='9' r='3' fill='%23d96c53'/%3E%3C/svg%3E">
+<style>
+/* ==================================================================
+   同类项 · 三消  ——  视觉系统
+   基调：教室里的黑板 + 数学本上的方格纸 + 贴纸卡片
+   颜色只用 6 个家族色，保证「同一颜色 = 同一类项」可以当作线索
+   ================================================================== */
+:root {
+  /* 中性色：带一点青的墨黑，避免死黑 */
+  --bg-0: #12332f;
+  --bg-1: #1c4a44;
+  --bg-2: #0d2724;
+  --ink: #1b2625;
+  --ink-soft: #4a5a58;
+  --cream: #f6efdf;
+  --cream-2: #efe4cd;
+  --paper: #fffaf0;
+  --line: #d9cbb0;
+  --board: #1f3b39;
+  --board-2: #234845;
+  --wood: #b98252;
+  --wood-2: #8d5f38;
+  --rail-bg: #12211f;
+  --white: #fffdf8;
+
+  /* 家族色（也是卡片的色带颜色） */
+  --indigo: #3f5fbf;
+  --amber: #e0972a;
+  --teal: #1f8f86;
+  --plum: #8b5cb4;
+  --vermilion: #d4553a;
+  --forest: #3f8b45;
+  --gold: #c9971c;
+
+  --shadow-tile: 0 2px 0 rgba(255, 255, 255, .7) inset, 0 1px 2px rgba(20, 30, 30, .18), 0 6px 12px -6px rgba(6, 30, 28, .55);
+  --radius: 14px;
+  --sr: 8px;
+  --font-display: "Hoefler Text", "Rockwell", "Roboto Slab", "Bitter", "Iowan Old Style", Georgia, "Songti SC", "SimSun", serif;
+  --font-ui: "Avenir Next", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --font-math: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Songti SC", "SimSun", serif;
+  --ease-pop: cubic-bezier(.22, .9, .28, 1.04);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background:
+    radial-gradient(1100px 620px at 50% -10%, #2b635a 0%, rgba(43, 99, 90, 0) 62%),
+    linear-gradient(168deg, var(--bg-1) 0%, var(--bg-0) 48%, var(--bg-2) 100%);
+  color: var(--cream);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 方格纸纹理 + 噪点 */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, .045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, .045) 1px, transparent 1px);
+  background-size: 26px 26px, 26px 26px;
+  opacity: .5;
+  z-index: 0;
+}
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: .32;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='.42'/%3E%3C/svg%3E");
+  mix-blend-mode: soft-light;
+}
+
+.app { position: relative; z-index: 2; min-height: 100%; display: flex; align-items: center; justify-content: center; padding: var(--vb-pad, 12px) 12px; }
+
+/* 固定 1180×760 舞台，小屏等比缩放，保证两端系统像素级一致 */
+.stage {
+  width: 1180px;
+  height: 760px;
+  flex: 0 0 auto;
+  transform-origin: center center;
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  grid-template-rows: auto 1fr;
+  gap: 14px 18px;
+  padding: 16px 18px 18px;
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .07), rgba(255, 255, 255, 0) 30%),
+    rgba(9, 30, 28, .55);
+  border: 1px solid rgba(255, 255, 255, .12);
+  box-shadow: 0 40px 90px -30px rgba(0, 0, 0, .75), 0 0 0 1px rgba(0, 0, 0, .3);
+}
+
+/* ---------------- 顶栏 ---------------- */
+.topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; }
+.brand { display: flex; align-items: baseline; gap: 10px; }
+.brand h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 27px;
+  letter-spacing: .04em;
+  color: var(--cream);
+}
+.brand h1 em { font-style: normal; color: #f0c46a; }
+.brand .sub {
+  font-size: 12px;
+  color: rgba(246, 239, 223, .6);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+.brand .rule {
+  font-family: var(--font-math);
+  font-size: 13px;
+  color: rgba(246, 239, 223, .78);
+  padding-left: 12px;
+  border-left: 1px solid rgba(246, 239, 223, .22);
+}
+.spacer { flex: 1; }
+.hud { display: flex; align-items: center; gap: 8px; }
+.hud-item {
+  display: flex; flex-direction: column; align-items: center;
+  min-width: 62px; padding: 5px 10px;
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 10px;
+}
+.hud-item b { font-family: var(--font-math); font-size: 17px; font-weight: 600; color: var(--cream); }
+.hud-item span { font-size: 10px; letter-spacing: .12em; color: rgba(246, 239, 223, .55); }
+.icon-btn {
+  width: 36px; height: 36px; display: grid; place-items: center;
+  border-radius: 10px; cursor: pointer;
+  background: rgba(255, 255, 255, .07);
+  border: 1px solid rgba(255, 255, 255, .12);
+  color: var(--cream); font-size: 15px; font-family: var(--font-ui);
+  transition: background .18s ease, transform .18s var(--ease-pop);
+}
+.icon-btn:hover { background: rgba(255, 255, 255, .16); transform: translateY(-1px); }
+.icon-btn.is-muted { color: rgba(246, 239, 223, .4); }
+.icon-btn svg { width: 18px; height: 18px; }
+
+/* ---------------- 左：牌桌 ---------------- */
+.table { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.board-wrap {
+  position: relative;
+  padding: 16px 18px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, var(--wood) 0%, var(--wood-2) 100%);
+  box-shadow: 0 18px 34px -18px rgba(0, 0, 0, .8), 0 2px 0 rgba(255, 255, 255, .18) inset;
+}
+.board {
+  position: relative;
+  width: 520px; height: 392px;
+  margin: 0 auto;
+  border-radius: 12px;
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(255, 255, 255, .07) 0%, rgba(255, 255, 255, 0) 55%),
+    linear-gradient(180deg, var(--board-2), var(--board));
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .35) inset, 0 14px 30px -18px rgba(0, 0, 0, .8) inset;
+  overflow: hidden;
+}
+.board::before {
+  content: "";
+  position: absolute; inset: 0; opacity: .5; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, .045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, .045) 1px, transparent 1px);
+  background-size: 26px 26px;
+}
+.board-hint-corner {
+  position: absolute; top: 2px; left: 20px;
+  font-family: var(--font-math); font-size: 10px; letter-spacing: .18em;
+  color: rgba(255, 250, 240, .5);
+  pointer-events: none;
+}
+
+/* ---------------- 卡片 ---------------- */
+.tile {
+  position: absolute;
+  left: var(--x); top: var(--y);
+  width: 78px; height: 78px;
+  margin: 0; padding: 0;
+  border-radius: var(--radius);
+  border: 1px solid #cfbe9d;
+  background: linear-gradient(178deg, var(--paper) 0%, var(--cream) 62%, var(--cream-2) 100%);
+  box-shadow: var(--shadow-tile);
+  color: var(--ink);
+  cursor: pointer;
+  overflow: hidden;
+  transform: rotate(var(--tilt));
+  transform-origin: 50% 55%;
+  animation: tile-in .42s var(--ease-pop) both;
+  transition: transform .18s var(--ease-pop), box-shadow .2s ease, filter .2s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.tile:focus-visible { outline: 3px solid #f0c46a; outline-offset: 2px; }
+.tile.is-locked { cursor: not-allowed; }
+
+/* 被压住的牌：明显压暗 + 斜纹 + 去饱和，和可点的牌一眼分得开 */
+.tile.is-locked::after {
+  content: "";
+  position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+  background-image:
+    repeating-linear-gradient(45deg, rgba(20, 30, 30, .30) 0 4px, rgba(20, 30, 30, 0) 4px 9px),
+    linear-gradient(180deg, rgba(18, 30, 30, .46), rgba(18, 30, 30, .62));
+}
+.tile.is-locked .term { opacity: .5; }
+.tile.is-locked { box-shadow: 0 1px 0 rgba(255, 255, 255, .35) inset, 0 3px 7px -4px rgba(6, 30, 28, .5); }
+
+/* 可点的牌：更亮、微微上浮，鼠标移上去有明显反馈 */
+.tile.is-open {
+  box-shadow: 0 2px 0 rgba(255, 255, 255, .85) inset, 0 8px 16px -8px rgba(6, 30, 28, .6);
+}
+.tile.is-open:hover {
+  transform: rotate(0deg) translateY(-6px) scale(1.05);
+  box-shadow: 0 3px 0 rgba(255, 255, 255, .9) inset, 0 16px 24px -10px rgba(6, 30, 28, .75), 0 0 0 2px rgba(240, 196, 106, .6);
+  z-index: 99 !important;
+}
+.tile.is-open:active { transform: rotate(0deg) translateY(-1px) scale(.99); }
+.tile.is-hint { animation: hint-pulse 1s ease-in-out infinite; }
+
+/* 右上角的家族符号 */
+.tile-deco {
+  position: absolute; top: 6px; right: 7px;
+  width: 16px; height: 16px; opacity: .45;
+}
+.tile-deco svg { width: 100%; height: 100%; }
+
+/*
+ * 卡面正中央是一个完整的「项」：系数 + 字母 紧挨着写，像课本里那样。
+ * 系数下方标一个 a，说明它就是系数 —— 这是学生最容易看漏的地方。
+ */
+.term {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center; gap: 1px;
+  font-family: var(--font-math);
+  font-size: 27px; font-weight: 600; letter-spacing: .01em;
+  color: var(--ink);
+  padding: 6px 4px 8px;
+  transition: opacity .2s ease;
+}
+.term .coef {
+  position: relative;
+  color: #8a5a12;              /* 系数用暖棕色，和字母区分开 */
+  padding: 0 1px;
+}
+.term .coef-mark {
+  position: absolute; left: 50%; bottom: -11px;
+  transform: translateX(-50%);
+  font-family: var(--font-math); font-style: italic;
+  font-size: 12px; font-weight: 400; letter-spacing: 0;
+  color: rgba(138, 90, 18, .75);
+}
+.term .letters { font-size: 1em; color: var(--ink); }
+.term .sup { font-size: .6em; vertical-align: .45em; }
+/* 常数项（没有字母）就只显示数字，不加 a 标记 */
+.term.is-const .coef { color: var(--ink); }
+.tile-stripe { position: absolute; left: 0; right: 0; bottom: 0; height: 5px; }
+.tile-stripe[data-accent="indigo"] { background: var(--indigo); }
+.tile-stripe[data-accent="amber"] { background: var(--amber); }
+.tile-stripe[data-accent="teal"] { background: var(--teal); }
+.tile-stripe[data-accent="plum"] { background: var(--plum); }
+.tile-stripe[data-accent="vermilion"] { background: var(--vermilion); }
+.tile-stripe[data-accent="forest"] { background: var(--forest); }
+.tile-stripe[data-accent="gold"] { background: var(--gold); }
+
+/* ---------------- 卡槽（7 个停车位） ---------------- */
+.rail-wrap {
+  padding: 10px 14px 12px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, .3), rgba(0, 0, 0, .16));
+  border: 1px solid rgba(255, 255, 255, .1);
+  display: grid;
+  gap: 8px;
+}
+.rail-head { display: flex; align-items: center; gap: 10px; font-size: 12px; color: rgba(246, 239, 223, .72); }
+.rail-head b { font-family: var(--font-math); font-size: 14px; color: var(--cream); }
+.rail-bar { flex: 1; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, .12); overflow: hidden; }
+.rail-bar i { display: block; height: 100%; width: var(--p, 0%); background: linear-gradient(90deg, #6fd0b6, #f0c46a); transition: width .25s ease; }
+.rail-bar.is-warn i { background: linear-gradient(90deg, #f0c46a, #d4553a); }
+.rail { display: flex; gap: 8px; justify-content: center; }
+.slot {
+  position: relative;
+  width: 74px; height: 78px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, .28);
+  border: 1px dashed rgba(246, 239, 223, .2);
+  box-shadow: 0 6px 14px -8px rgba(0, 0, 0, .9) inset;
+  display: grid; place-items: center;
+  transition: border-color .2s ease, background .2s ease;
+}
+.slot.is-next { border-color: rgba(240, 196, 106, .6); background: rgba(240, 196, 106, .09); }
+.slot.is-filled { border-style: solid; border-color: rgba(246, 239, 223, .22); }
+.slot-idx {
+  position: absolute; bottom: 3px; right: 6px;
+  font-family: var(--font-math); font-size: 10px; color: rgba(246, 239, 223, .3);
+}
+.mini {
+  position: relative;
+  width: 70px; height: 74px;
+  border-radius: 12px;
+  border: 1px solid #cfbe9d;
+  background: linear-gradient(178deg, var(--paper), var(--cream-2));
+  box-shadow: var(--shadow-tile);
+  color: var(--ink);
+  animation: mini-in .26s var(--ease-pop) both;
+  overflow: hidden;
+}
+.mini .letters { font-size: 25px; }
+.mini .coef { font-size: 12px; top: 4px; left: 6px; }
+.mini .tile-deco { width: 13px; height: 13px; top: 5px; right: 6px; }
+.ghost {
+  position: absolute; inset: 5px;
+  border-radius: 10px;
+  border: 2px dashed rgba(240, 196, 106, .75);
+  display: grid; place-items: center;
+  font-family: var(--font-math); font-size: 22px; font-weight: 600;
+  color: rgba(240, 196, 106, .9);
+  white-space: nowrap; overflow: hidden;
+  animation: ghost-in .3s ease both;
+}
+.ghost-letters { white-space: nowrap; font-size: 20px; }
+
+/* ---------------- 底部工具条 ---------------- */
+.tools { display: flex; align-items: center; gap: 10px; }
+.btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 15px 9px 12px;
+  border-radius: 11px; cursor: pointer;
+  font-family: var(--font-ui); font-size: 13.5px; font-weight: 600;
+  color: var(--cream);
+  background: rgba(255, 255, 255, .08);
+  border: 1px solid rgba(255, 255, 255, .14);
+  box-shadow: 0 2px 0 rgba(255, 255, 255, .08) inset;
+  transition: transform .16s var(--ease-pop), background .18s ease;
+}
+.btn:hover { background: rgba(255, 255, 255, .16); transform: translateY(-1px); }
+.btn:active { transform: translateY(1px); }
+.btn svg { width: 16px; height: 16px; }
+.btn.primary { background: linear-gradient(180deg, #f0c46a, #dba945); color: #3a2a07; border-color: #f6d78f; }
+.btn.primary:hover { background: linear-gradient(180deg, #f6d182, #e2b24f); }
+.btn .badge {
+  min-width: 18px; height: 18px; border-radius: 9px;
+  background: rgba(0, 0, 0, .28); color: #fff;
+  font-family: var(--font-math); font-size: 11px;
+  display: grid; place-items: center; padding: 0 4px;
+}
+.btn .badge:empty { display: none; }
+.statusline {
+  flex: 1; text-align: right; font-size: 12.5px;
+  color: rgba(246, 239, 223, .74);
+  font-family: var(--font-ui);
+  min-height: 18px;
+}
+
+/* ---------------- 右：面板 ---------------- */
+.panel {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 250, 240, .97), rgba(240, 231, 212, .95));
+  color: var(--ink);
+  box-shadow: 0 24px 44px -24px rgba(0, 0, 0, .8), 0 1px 0 rgba(255, 255, 255, .9) inset;
+  overflow: hidden;
+}
+.panel-head { display: flex; align-items: flex-start; gap: 10px; }
+.panel-head h2 {
+  margin: 0; font-family: var(--font-display);
+  font-size: 21px; letter-spacing: .02em; color: var(--ink);
+}
+.panel-head p { margin: 2px 0 0; font-size: 11.5px; color: var(--ink-soft); line-height: 1.5; }
+.stars { display: flex; gap: 2px; margin-left: auto; }
+.star { font-size: 15px; color: rgba(27, 38, 37, .2); line-height: 1; }
+.star.is-on { color: #e0a52a; text-shadow: 0 1px 0 rgba(255, 255, 255, .6); }
+.star.big { font-size: 26px; }
+
+.chips { display: flex; gap: 5px; }
+.chip {
+  flex: 1; padding: 5px 0 4px; border-radius: 9px; cursor: pointer;
+  border: 1px solid var(--line); background: rgba(255, 255, 255, .6);
+  font-family: var(--font-math); font-size: 13px; font-weight: 600; color: var(--ink-soft);
+  display: grid; place-items: center; gap: 1px;
+  transition: transform .15s var(--ease-pop), background .18s ease;
+}
+.chip em { font-style: normal; font-size: 7.5px; color: #e0a52a; letter-spacing: -.5px; }
+.chip:hover:not(:disabled) { background: #fff; transform: translateY(-1px); }
+.chip.is-current { background: var(--ink); color: var(--cream); border-color: var(--ink); }
+.chip.is-locked { opacity: .42; cursor: not-allowed; }
+
+.block { border-top: 1px dashed var(--line); padding-top: 10px; }
+.block-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; letter-spacing: .14em; color: var(--ink-soft);
+  text-transform: uppercase; margin-bottom: 8px;
+}
+.block-title b { font-family: var(--font-math); letter-spacing: 0; text-transform: none; font-size: 12px; color: var(--ink); }
+.block-title .grow { flex: 1; height: 1px; background: var(--line); }
+.prog { height: 6px; border-radius: 3px; background: rgba(27, 38, 37, .1); overflow: hidden; margin-bottom: 9px; }
+.prog i { display: block; height: 100%; background: linear-gradient(90deg, var(--teal), var(--forest)); transition: width .3s ease; }
+
+.legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.legend-item {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--ink-soft);
+  padding: 4px 6px; border-radius: 8px;
+  background: rgba(255, 255, 255, .55);
+  border-left: 4px solid var(--line);
+}
+.legend-item[data-accent="indigo"] { border-left-color: var(--indigo); }
+.legend-item[data-accent="amber"] { border-left-color: var(--amber); }
+.legend-item[data-accent="teal"] { border-left-color: var(--teal); }
+.legend-item[data-accent="plum"] { border-left-color: var(--plum); }
+.legend-item[data-accent="vermilion"] { border-left-color: var(--vermilion); }
+.legend-item[data-accent="forest"] { border-left-color: var(--forest); }
+.legend-item[data-accent="gold"] { border-left-color: var(--gold); }
+.legend-key {
+  font-family: var(--font-math); font-size: 9px; color: #8a5a12;
+  border: 1px solid rgba(138, 90, 18, .45); border-radius: 4px; padding: 0 2px;
+  background: rgba(224, 151, 42, .1);
+}
+.legend-sample { font-family: var(--font-math); font-size: 15px; font-weight: 600; color: var(--ink); min-width: 26px; }
+.legend-label { font-size: 11.5px; }
+
+.journal { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; overflow-y: auto; max-height: 132px; }
+.journal-empty { font-size: 11.5px; color: rgba(27, 38, 37, .38); line-height: 1.6; }
+.journal-item {
+  display: flex; align-items: center; gap: 7px;
+  font-family: var(--font-math); font-size: 13px; color: var(--ink);
+  background: rgba(255, 255, 255, .72);
+  border: 1px solid rgba(217, 203, 176, .8);
+  border-radius: 8px; padding: 4px 8px;
+  animation: row-in .28s ease both;
+}
+.journal-item .jn { font-size: 9px; color: rgba(27, 38, 37, .4); }
+.journal-item[data-accent="indigo"] { box-shadow: 3px 0 0 var(--indigo) inset; }
+.journal-item[data-accent="amber"] { box-shadow: 3px 0 0 var(--amber) inset; }
+.journal-item[data-accent="teal"] { box-shadow: 3px 0 0 var(--teal) inset; }
+.journal-item[data-accent="plum"] { box-shadow: 3px 0 0 var(--plum) inset; }
+.journal-item[data-accent="vermilion"] { box-shadow: 3px 0 0 var(--vermilion) inset; }
+.journal-item[data-accent="forest"] { box-shadow: 3px 0 0 var(--forest) inset; }
+.journal-item[data-accent="gold"] { box-shadow: 3px 0 0 var(--gold) inset; }
+
+.answer-card {
+  margin-top: 9px; padding: 9px 11px;
+  border-radius: 10px;
+  width: 100%; text-align: left; cursor: pointer;
+  font-family: var(--font-ui);
+  background: linear-gradient(160deg, #234845, #16302e);
+  border: 1px solid rgba(0, 0, 0, .3);
+  color: var(--cream);
+  display: grid; gap: 3px;
+  transition: transform .16s var(--ease-pop), box-shadow .2s ease;
+}
+.answer-card:hover { transform: translateY(-1px); box-shadow: 0 8px 18px -10px rgba(0, 0, 0, .8); }
+.answer-card .lbl { font-size: 10px; letter-spacing: .16em; color: rgba(246, 239, 223, .55); }
+.answer-card .answer-value {
+  position: relative; display: block; border-radius: 7px;
+  padding: 1px 0;
+}
+#answer {
+  font-family: var(--font-math); font-size: 20px; font-weight: 600; letter-spacing: .01em;
+  color: #f4e2b6;
+  transition: filter .25s ease, opacity .25s ease;
+  filter: blur(6px) saturate(.4); opacity: .55;
+  display: inline-block;
+}
+.answer-card.is-revealed #answer { filter: none; opacity: 1; }
+.answer-card .answer-value::after {
+  content: "自己先算一算"; position: absolute; inset: 0;
+  display: grid; place-items: center;
+  font-size: 11px; letter-spacing: .08em; color: rgba(246, 239, 223, .8);
+  transition: opacity .2s ease;
+}
+.answer-card.is-revealed .answer-value::after { opacity: 0; }
+#answer-hint { font-size: 10.5px; color: rgba(246, 239, 223, .5); }
+.panel-foot {
+  margin-top: auto; padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  font-size: 10.5px; color: rgba(27, 38, 37, .45); line-height: 1.7;
+}
+.panel-foot kbd {
+  font-family: var(--font-ui); font-size: 10px; padding: 0 4px;
+  border: 1px solid var(--line); border-radius: 4px; background: #fff;
+}
+.panel-foot .credit { margin-top: 4px; }
+.panel-foot .credit b { color: var(--ink-soft); font-weight: 600; }
+.panel-foot .credit a {
+  color: var(--teal); text-decoration: none;
+  border-bottom: 1px solid rgba(31, 143, 134, .35);
+  word-break: break-all;
+}
+.panel-foot .credit a:hover { color: #146b64; border-bottom-color: #146b64; }
+
+/* ---------------- 算式卡（合并瞬间） ---------------- */
+.eqcard {
+  position: absolute;
+  left: 50%; bottom: 18px;
+  width: 460px;
+  transform: translate(-50%, 22px) rotate(-1.2deg) scale(.94);
+  opacity: 0;
+  pointer-events: none;
+  padding: 14px 18px 13px;
+  border-radius: 14px;
+  background: linear-gradient(178deg, var(--paper), var(--cream-2));
+  border: 1px solid #cbb997;
+  box-shadow: 0 22px 40px -18px rgba(0, 0, 0, .75), 0 1px 0 rgba(255, 255, 255, .9) inset;
+  color: var(--ink);
+  z-index: 200;
+  transition: opacity .22s ease, transform .28s var(--ease-pop);
+}
+.eqcard.is-show { opacity: 1; transform: translate(-50%, 0) rotate(-1.2deg) scale(1); }
+.eqcard::before {
+  content: "";
+  position: absolute; top: 0; left: 0; right: 0; height: 5px;
+  border-radius: 14px 14px 0 0;
+  background: var(--teal);
+}
+.eqcard[data-accent="indigo"]::before { background: var(--indigo); }
+.eqcard[data-accent="amber"]::before { background: var(--amber); }
+.eqcard[data-accent="teal"]::before { background: var(--teal); }
+.eqcard[data-accent="plum"]::before { background: var(--plum); }
+.eqcard[data-accent="vermilion"]::before { background: var(--vermilion); }
+.eqcard[data-accent="forest"]::before { background: var(--forest); }
+.eqcard[data-accent="gold"]::before { background: var(--gold); }
+.eqcard .tag {
+  font-size: 10px; letter-spacing: .18em; color: var(--ink-soft);
+  display: block; margin-bottom: 5px;
+}
+#eq-formula { font-family: var(--font-math); font-size: 25px; font-weight: 600; letter-spacing: .01em; }
+#eq-why { margin-top: 6px; font-size: 11.5px; color: var(--ink-soft); line-height: 1.55; }
+
+/* ---------------- 提示条 ---------------- */
+.toast {
+  position: fixed; left: 50%; top: 22px; z-index: 500;
+  transform: translate(-50%, -14px);
+  opacity: 0; pointer-events: none;
+  padding: 10px 18px; border-radius: 11px;
+  background: rgba(20, 40, 38, .95);
+  border: 1px solid rgba(255, 255, 255, .16);
+  color: var(--cream); font-size: 13px;
+  box-shadow: 0 18px 34px -18px rgba(0, 0, 0, .9);
+  transition: opacity .2s ease, transform .24s var(--ease-pop);
+}
+.toast.is-show { opacity: 1; transform: translate(-50%, 0); }
+.toast.is-warn { background: rgba(122, 52, 34, .96); border-color: rgba(255, 200, 170, .35); }
+
+/* ---------------- 弹层 ---------------- */
+.overlay {
+  position: fixed; inset: 0; z-index: 600;
+  display: none; place-items: center;
+  background: rgba(8, 24, 22, .74);
+  backdrop-filter: blur(3px);
+}
+.overlay.is-show { display: grid; animation: fade-in .2s ease both; }
+.dialog {
+  width: 460px; padding: 26px 28px 22px;
+  border-radius: 20px; text-align: center;
+  background: linear-gradient(178deg, var(--paper), var(--cream));
+  color: var(--ink);
+  border: 1px solid #cbb997;
+  box-shadow: 0 40px 70px -30px rgba(0, 0, 0, .9);
+  animation: dialog-in .32s var(--ease-pop) both;
+}
+.dialog .kind { font-size: 11px; letter-spacing: .2em; color: var(--teal); text-transform: uppercase; }
+.dialog h3 { margin: 8px 0 4px; font-family: var(--font-display); font-size: 26px; }
+.dialog p { margin: 0 0 12px; font-size: 13px; color: var(--ink-soft); line-height: 1.7; }
+#overlay-stars { display: flex; gap: 6px; justify-content: center; margin: 4px 0 12px; }
+#overlay-answer { display: grid; gap: 4px; justify-items: center; margin-bottom: 16px; }
+#overlay-answer .ans {
+  font-family: var(--font-math); font-size: 34px; font-weight: 600; color: var(--ink);
+  padding: 6px 18px; border-radius: 12px;
+  background: rgba(31, 143, 134, .1); border: 1px solid rgba(31, 143, 134, .3);
+}
+#overlay-answer .ans-note { font-size: 11.5px; color: var(--ink-soft); }
+.dialog-actions { display: flex; gap: 10px; justify-content: center; }
+.dialog-credit { margin: 14px 0 0 !important; font-size: 10.5px !important; color: rgba(27, 38, 37, .45) !important; }
+.dialog-credit a { color: var(--teal); text-decoration: none; border-bottom: 1px solid rgba(31, 143, 134, .35); }
+.dialog-credit a:hover { color: #146b64; }
+.dialog .btn { background: rgba(27, 38, 37, .07); border-color: var(--line); color: var(--ink); }
+.dialog .btn:hover { background: rgba(27, 38, 37, .13); }
+.dialog .btn.primary { background: linear-gradient(180deg, #23504c, #1b3b38); color: var(--cream); border-color: #23504c; }
+
+/* ---------------- 帮助 / 规则 ---------------- */
+.help {
+  position: fixed; inset: 0; z-index: 700; display: none;
+  place-items: center; background: rgba(8, 24, 22, .78);
+  backdrop-filter: blur(4px);
+}
+.help.is-show { display: grid; animation: fade-in .2s ease both; }
+.help-card {
+  width: 620px; max-height: 88vh; overflow-y: auto;
+  padding: 28px 30px 24px;
+  border-radius: 22px;
+  background: linear-gradient(178deg, var(--paper), var(--cream));
+  color: var(--ink);
+  box-shadow: 0 40px 80px -30px rgba(0, 0, 0, .9);
+  animation: dialog-in .34s var(--ease-pop) both;
+}
+.help-card h2 { margin: 0 0 6px; font-family: var(--font-display); font-size: 30px; letter-spacing: .02em; }
+.help-card .lead { margin: 0 0 16px; font-size: 13px; color: var(--ink-soft); line-height: 1.7; }
+.help-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+.help-box {
+  padding: 13px 15px; border-radius: 14px;
+  background: rgba(255, 255, 255, .7);
+  border: 1px solid var(--line);
+}
+.help-box h4 { margin: 0 0 7px; font-size: 12px; letter-spacing: .12em; color: var(--teal); text-transform: uppercase; }
+.help-box ul { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--ink-soft); line-height: 1.75; }
+.help-box .formula {
+  font-family: var(--font-math); font-size: 16px; color: var(--ink);
+  background: rgba(31, 143, 134, .09); border-radius: 8px;
+  padding: 7px 10px; margin: 0 0 8px; display: block;
+}
+.help-box .note { font-size: 11.5px; color: var(--ink-soft); line-height: 1.7; }
+.rule-bad { color: var(--vermilion); font-weight: 600; }
+.rule-good { color: var(--forest); font-weight: 600; }
+.help-actions { display: flex; gap: 10px; align-items: center; }
+.help-credit { font-size: 11px; color: var(--ink-soft); }
+.help-credit b { color: var(--ink); }
+.help-credit a { color: var(--teal); text-decoration: none; border-bottom: 1px solid rgba(31, 143, 134, .35); }
+.help-credit a:hover { color: #146b64; }
+.help-actions .spacer { flex: 1; }
+.help-card .btn { background: rgba(27, 38, 37, .07); border-color: var(--line); color: var(--ink); }
+.help-card .btn:hover { background: rgba(27, 38, 37, .13); }
+.help-card .btn.primary { background: linear-gradient(180deg, #23504c, #1b3b38); color: var(--cream); border-color: #23504c; }
+
+/* ---------------- 动画 ---------------- */
+@keyframes tile-in {
+  from { opacity: 0; transform: rotate(var(--tilt)) translateY(-14px) scale(.86); }
+  to   { opacity: 1; transform: rotate(var(--tilt)) translateY(0) scale(1); }
+}
+@keyframes mini-in {
+  from { opacity: 0; transform: translateY(8px) scale(.9); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes ghost-in { from { opacity: 0; transform: scale(.8); } to { opacity: 1; transform: none; } }
+@keyframes row-in { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
+@keyframes hint-pulse {
+  0%, 100% { box-shadow: var(--shadow-tile), 0 0 0 0 rgba(240, 196, 106, .8); transform: rotate(var(--tilt)) scale(1); }
+  50% { box-shadow: var(--shadow-tile), 0 0 0 9px rgba(240, 196, 106, 0); transform: rotate(0deg) scale(1.06); }
+}
+@keyframes is-shake {
+  0%, 100% { transform: rotate(var(--tilt)) translateX(0); }
+  20% { transform: rotate(var(--tilt)) translateX(-5px); }
+  45% { transform: rotate(var(--tilt)) translateX(5px); }
+  70% { transform: rotate(var(--tilt)) translateX(-3px); }
+}
+.is-shake { animation: is-shake .4s ease; }
+#rail.is-shake { animation: is-shake .4s ease; }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dialog-in {
+  from { opacity: 0; transform: translateY(16px) scale(.96); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .001s !important; transition-duration: .001s !important; }
+}
+
+/* 纸张质感：把噪点叠在卡片与面板上 */
+.tile::before, .panel::before, .eqcard::before { will-change: opacity; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="stage" id="stage">
+
+    <!-- ======================= 顶栏 ======================= -->
+    <header class="topbar">
+      <div class="brand">
+        <h1>同类项<em>·</em>三消</h1>
+        <span class="sub">combine like terms</span>
+      </div>
+      <span class="rule">所含字母相同，并且相同字母的指数也相同 —— 才能合并</span>
+      <span class="spacer"></span>
+      <div class="hud">
+        <div class="hud-item"><b id="timer">0:00</b><span>用时</span></div>
+        <div class="hud-item"><b id="board-count">0</b><span>桌面</span></div>
+        <div class="hud-item"><b id="open-count">0</b><span>可点</span></div>
+        <button class="icon-btn" id="btn-sound" type="button" title="音效开关" aria-pressed="true" aria-label="音效开关">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 9.5h3.2L12 5.6v12.8L7.2 14.5H4z"/>
+            <path d="M16 9.2a4 4 0 0 1 0 5.6"/>
+            <path d="M18.6 6.6a7.4 7.4 0 0 1 0 10.8"/>
+          </svg>
+        </button>
+        <button class="icon-btn" id="btn-help" type="button" title="玩法与知识点（H）" aria-label="玩法说明">?</button>
+      </div>
+    </header>
+
+    <!-- ======================= 牌桌 ======================= -->
+    <section class="table">
+      <div class="board-wrap">
+        <span class="board-hint-corner">CLASSROOM BOARD · NO. <span id="seed">#00000</span></span>
+        <div class="board" id="board"></div>
+        <div class="eqcard" id="eqcard">
+          <span class="tag">合并同类项</span>
+          <div id="eq-formula">3x + 5x − 2x = 6x</div>
+          <div id="eq-why">字母和指数完全相同，只把系数相加</div>
+        </div>
+      </div>
+
+      <div class="rail-wrap">
+        <div class="rail-head">
+          <span>卡槽</span>
+          <b><span id="rail-count">0</span>/<span id="rail-max">7</span></b>
+          <div class="rail-bar" id="railbar"><i></i></div>
+          <span>凑满 3 张同类项自动合并</span>
+        </div>
+        <div class="rail" id="rail"></div>
+      </div>
+
+      <div class="tools">
+        <button class="btn" id="btn-hint" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 1 3.6 10.8c-.5.4-.6 1-.6 1.7v.5h-6v-.5c0-.7-.1-1.3-.6-1.7A6 6 0 0 1 12 3z"/></svg>
+          提示 <span class="badge" id="hint-count"></span>
+        </button>
+        <button class="btn" id="btn-undo" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg>
+          撤销
+        </button>
+        <button class="btn" id="btn-restart" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></svg>
+          重开
+        </button>
+        <span class="statusline" id="statusline">点击没有被压住的卡片，凑满 3 张同类项</span>
+      </div>
+    </section>
+
+    <!-- ======================= 右侧面板 ======================= -->
+    <aside class="panel">
+      <div class="panel-head">
+        <div>
+          <h2><span id="lv-name">第 1 关</span> · <span id="lv-title">暖身</span></h2>
+          <p id="lv-brief">只有 x 与 y 两族，先找找手感</p>
+        </div>
+        <div class="stars" id="lv-stars"></div>
+      </div>
+
+      <div class="chips" id="level-chips"></div>
+
+      <div class="block">
+        <div class="block-title">合并进度 <b id="prog-text">0 / 2 组</b><span class="grow"></span></div>
+        <div class="prog"><i id="prog-bar"></i></div>
+        <div class="block-title">本关的同类项家族 <span class="grow"></span></div>
+        <ul class="legend" id="legend"></ul>
+      </div>
+
+      <div class="block">
+        <div class="block-title">合并过程 <span class="grow"></span></div>
+        <ul class="journal" id="journal"></ul>
+        <button type="button" class="answer-card" id="answer-card" aria-label="揭晓答案">
+          <span class="lbl">合并全部同类项后的答案</span>
+          <span class="answer-value"><span id="answer">6x + 4y</span></span>
+          <span id="answer-hint">点这里揭晓答案</span>
+        </button>
+      </div>
+
+      <div class="panel-foot">
+        <div class="shortcuts"><kbd>H</kbd> 提示 · <kbd>U</kbd> 撤销 · <kbd>R</kbd> 重开 · <kbd>Esc</kbd> 关闭弹窗</div>
+        <div class="credit">
+          作者：<b>1ternal</b> ·
+          <a href="https://github.com/1ternalCuz" target="_blank" rel="noopener noreferrer">github.com/1ternalCuz</a>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- ======================= 过关 / 卡死 弹层 ======================= -->
+<div class="overlay" id="overlay">
+  <div class="dialog">
+    <span class="kind" id="overlay-kind">合并完成</span>
+    <h3 id="overlay-title">暖身 ✓</h3>
+    <div id="overlay-stars"></div>
+    <p id="overlay-sub">用时 0:42</p>
+    <div id="overlay-answer"></div>
+    <div class="dialog-actions">
+      <button class="btn primary" id="overlay-primary" type="button">下一关</button>
+      <button class="btn" id="overlay-ghost" type="button">重玩本关</button>
+    </div>
+    <p class="dialog-credit">
+      同类项·三消 · 作者 <b>1ternal</b> ·
+      <a href="https://github.com/1ternalCuz" target="_blank" rel="noopener noreferrer">github.com/1ternalCuz</a>
+    </p>
+  </div>
+</div>
+
+<!-- ======================= 玩法 / 知识点 ======================= -->
+<div class="help" id="help">
+  <div class="help-card">
+    <h2>同类项 · 三消</h2>
+    <p class="lead">
+      桌面上堆着代数式卡片。点一张没被压住的卡片放进卡槽，
+      卡槽里凑满 <b>3 张同类项</b> 就会自动合并成一张新的卡片。
+      把整桌牌全部合并完，就算通关。
+    </p>
+
+    <div class="help-grid">
+      <div class="help-box">
+        <h4>知识点 · 什么是同类项</h4>
+        <span class="formula">所含字母相同，并且相同字母的指数也相同</span>
+        <p class="note">
+          <span class="rule-good">3x、−5x、0.5x</span> 是同类项：都只含字母 x，指数都是 1。<br>
+          <span class="rule-bad">x 与 x²</span> 不是同类项：字母相同，但指数不同。<br>
+          <span class="rule-bad">x 与 xy</span> 不是同类项：所含字母不同。<br>
+          所有常数项（−3、5、8…）也是同类项。
+        </p>
+      </div>
+      <div class="help-box">
+        <h4>知识点 · 怎么合并</h4>
+        <span class="formula">3x + 5x − 2x = (3 + 5 − 2)x = 6x</span>
+        <p class="note">
+          字母部分保持不变，只把系数相加减。<br>
+          系数是负数、是分数都照这个办法算：<br>
+          <span class="formula" style="margin-top:6px">−2x² + 0.5x² + 2.5x² = (−2 + 0.5 + 2.5)x² = x²</span>
+        </p>
+      </div>
+    </div>
+
+    <div class="help-box" style="margin-bottom:16px">
+      <h4>怎么玩</h4>
+      <ul>
+        <li>卡面就是一个<b>项</b>：左下角那行小字 a 是<b>系数</b>，例如 <b>6x</b> 表示 6 个 x。</li>
+        <li>只有<b>没有被上层卡片压住</b>的牌可以点：可点的牌是明亮的，被压住的牌会变暗并带斜纹。</li>
+        <li>卡槽有 <b>7</b> 个位置。放进去的牌暂时合并不了，就会占着位置。</li>
+        <li>位置满了也别慌：点 <b>撤销</b> 把上一张牌退回桌面，换个顺序再来。</li>
+        <li>不确定点哪张？点 <b>提示</b>，游戏会告诉你现在能凑的同类项在哪。</li>
+        <li>每一关约 1～2 分钟。右侧「合并过程」会把每一步算式记下来。</li>
+      </ul>
+    </div>
+
+    <div class="help-actions">
+      <span class="help-credit">
+        作者 <b>1ternal</b> ·
+        <a href="https://github.com/1ternalCuz" target="_blank" rel="noopener noreferrer">github.com/1ternalCuz</a>
+      </span>
+      <span class="spacer"></span>
+      <button class="btn" id="help-close" type="button">先看看牌桌</button>
+      <button class="btn primary" id="help-start" type="button">开始合并</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===== engine.js：数学与发牌逻辑，每副牌都经过可解性验证 ===== */
+window.__LT_SRC__ = window.__LT_SRC__ || {};
+window.__LT_SRC__["engine.js"] = "/*!\n * 同类项·三消 —— 游戏核心逻辑（纯函数，无 DOM 依赖）\n * 初中数学「合并同类项」教学小游戏\n *\n * 该文件既可被浏览器作为普通脚本加载（挂到 window.GameEngine），\n * 也可被 Node 直接 import 做自动化测试。\n *\n * 核心设计：\n *   - 「先定答案，再倒推卡面」：每个同类项家族的系数之和恒等于预设 targets，\n *     所以任何时候合并结果都是一致的、干净的整数（或最简分数）。\n *   - 「发牌必可解」：每副牌都用贪心+有限回溯求解器验证过，绝不出现死局。\n */\n\nconst SUP = { 2: '\\u00B2', 3: '\\u00B3', 4: '\\u2074' }; // ² ³ ⁴\nconst MINUS = '\\u2212'; // 数学减号 −（比连字符 - 更规范）\nconst CDOT = '\\u00B7'; // 乘号 ·\nconst TIMES = '\\u00D7'; // 大字乘号 ×\n\n/* ------------------------------------------------------------------ *\n * 0. 工具\n * ------------------------------------------------------------------ */\n\n/** 可复现随机数（mulberry32） */\nfunction makeRng(seed) {\n  let a = seed >>> 0;\n  return function rng() {\n    a = (a + 0x6d2b79f5) >>> 0;\n    let t = a;\n    t = Math.imul(t ^ (t >>> 15), t | 1);\n    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);\n    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;\n  };\n}\n\nfunction hashSeed(str) {\n  let h = 2166136261 >>> 0;\n  for (let i = 0; i < String(str).length; i++) {\n    h ^= String(str).charCodeAt(i);\n    h = Math.imul(h, 16777619);\n  }\n  return h >>> 0;\n}\n\nconst round6 = (n) => Math.round(n * 1e6) / 1e6;\n\nfunction shuffle(arr, rng) {\n  for (let i = arr.length - 1; i > 0; i--) {\n    const j = Math.floor(rng() * (i + 1));\n    const t = arr[i];\n    arr[i] = arr[j];\n    arr[j] = t;\n  }\n  return arr;\n}\n\n/* ------------------------------------------------------------------ *\n * 1. 同类项「家族」定义\n *    合并同类项的依据：所含字母相同，并且相同字母的指数也相同。\n *    常数项（不含字母）自成一族。\n * ------------------------------------------------------------------ */\n\nconst FAMILIES = {\n  x: { id: 'x', powers: { x: 1 }, label: '\\u4E00\\u6B21\\u9879 x', icon: 'triangle', accent: 'indigo' },\n  y: { id: 'y', powers: { y: 1 }, label: '\\u4E00\\u6B21\\u9879 y', icon: 'triangle', accent: 'amber' },\n  z: { id: 'z', powers: { z: 1 }, label: '\\u4E00\\u6B21\\u9879 z', icon: 'triangle', accent: 'plum' },\n  a: { id: 'a', powers: { a: 1 }, label: '\\u4E00\\u6B21\\u9879 a', icon: 'triangle', accent: 'plum' },\n  b: { id: 'b', powers: { b: 1 }, label: '\\u4E00\\u6B21\\u9879 b', icon: 'triangle', accent: 'teal' },\n  x2: { id: 'x2', powers: { x: 2 }, label: '\\u4E8C\\u6B21\\u9879 x\\u00B2', icon: 'diamond', accent: 'vermilion' },\n  y2: { id: 'y2', powers: { y: 2 }, label: '\\u4E8C\\u6B21\\u9879 y\\u00B2', icon: 'diamond', accent: 'forest' },\n  z2: { id: 'z2', powers: { z: 2 }, label: '\\u4E8C\\u6B21\\u9879 z\\u00B2', icon: 'diamond', accent: 'plum' },\n  xy: { id: 'xy', powers: { x: 1, y: 1 }, label: '\\u4E58\\u79EF\\u9879 xy', icon: 'square', accent: 'teal' },\n  ab: { id: 'ab', powers: { a: 1, b: 1 }, label: '\\u4E58\\u79EF\\u9879 ab', icon: 'square', accent: 'indigo' },\n  num: { id: 'num', powers: {}, label: '\\u5E38\\u6570\\u9879', icon: 'circle', accent: 'gold' },\n};\n\nconst LETTER = { x: 'x', y: 'y', z: 'z', a: 'a', b: 'b' };\n\n/** 字母部分（不含系数）：x、y²、x·y */\nfunction letterPart(powers) {\n  return Object.keys(powers)\n    .sort()\n    .map((k) => LETTER[k] + (powers[k] === 1 ? '' : SUP[powers[k]] || '^' + powers[k]))\n    .join(CDOT);\n}\n\n/** 系数文本：3 / -2 / 1/4 / -1/3 / 0.5 */\nfunction coefText(coef) {\n  if (Number.isInteger(coef)) return String(coef);\n  const EPS = 1e-9;\n  for (let d = 2; d <= 20; d++) {\n    const n = coef * d;\n    if (Math.abs(n - Math.round(n)) < EPS) {\n      const num = Math.round(n);\n      return (num < 0 ? MINUS + Math.abs(num) : String(num)) + '/' + d;\n    }\n  }\n  return String(coef);\n}\n\nfunction termBody(abs, letters) {\n  if (letters === '') return String(abs); // 常数项必须写出数字\n  if (abs === 1) return letters; // 1x 写成 x\n  return coefText(abs) + letters;\n}\n\n/** 带符号的项，用于算式：3x / −5x / +x / −x² / +8 */\nfunction renderSignedTerm(coef, powers) {\n  const letters = letterPart(powers);\n  return (coef < 0 ? MINUS : '+') + termBody(Math.abs(coef), letters);\n}\n\n/** 不带正号的项，用于卡片正面：3x / −5x / x / x² / x·y / −3 */\nfunction renderTerm(coef, powers) {\n  const t = renderSignedTerm(coef, powers);\n  return t[0] === '+' ? t.slice(1) : t;\n}\n\n/** 展开写法，用于「为什么」说明：3×x² / 1×x */\nfunction renderExpanded(coef, powers) {\n  const letters = letterPart(powers);\n  return letters === '' ? coefText(coef) : coefText(coef) + TIMES + letters;\n}\n\n/** 把若干项拼成算式：3x + 5x − 2x = 6x */\nfunction joinTerms(items) {\n  if (!items.length) return '0';\n  const parts = items.map((it) => renderSignedTerm(it.coef, it.powers));\n  const head = parts[0][0] === '+' ? parts[0].slice(1) : parts[0];\n  return head + parts.slice(1).map((p) => ' ' + p[0] + ' ' + p.slice(1)).join('');\n}\n\n/** 三张牌合并的算式：3x + 5x − 2x = 6x */\nfunction equationText(tiles) {\n  const sum = round6(tiles.reduce((s, t) => s + t.coef, 0));\n  return joinTerms(tiles.map((t) => ({ coef: t.coef, powers: t.powers }))) + ' = ' + renderTerm(sum, tiles[0].powers);\n}\n\n/** 最终答案：把所有家族合并之后的结果 */\nfunction answerText(families, targets) {\n  return joinTerms(\n    families\n      .map((f, i) => ({ coef: targets[i], powers: f.powers }))\n      .filter((it) => it.coef !== 0)\n  );\n}\n\n/* ------------------------------------------------------------------ *\n * 2. 关卡数据\n *    targets —— 该家族所有系数之和（即最终答案），先定答案再倒推卡面\n *    具体格式见文件内 LEVELS 的注释\n * ------------------------------------------------------------------ */\n\n/**\n * 关卡数据。\n *\n * 每个家族用 coefs 描述：一串「三张一组」的系数。\n *   - 每组的三个系数之和 = 该组能合并出的结果（0 表示正好抵消）\n *   - 一个家族里所有组的和 = 这个家族的最终答案（targets）\n * 这样设计有两个硬保证：\n *   1. 每个家族的牌数恒为 3 的倍数 → 绝不会有牌永远凑不成三张\n *   2. 每一组的三张牌都是一次完整的「合并同类项」，算式写出来刚好一行\n */\nconst LEVELS = [\n  {\n    id: 1,\n    name: '暖身',\n    brief: '只有 x 与 y 两族，先找找手感',\n    families: [\n      { id: 'x', target: 6, coefs: [[3, 5, -2]] },\n      { id: 'y', target: 4, coefs: [[4, -3, 3]] },\n    ],\n    layers: [\n      { rows: 3, cols: 4, cell: 97 },\n      { rows: 2, cols: 3, cell: 90 },\n    ],\n    railMax: 7,\n    starTimes: [25, 40, 70],\n  },\n  {\n    id: 2,\n    name: '小心 x²',\n    brief: 'x 和 x² 不是同类项，别放错',\n    families: [\n      { id: 'x', target: 8, coefs: [[5, 6, -3]] },\n      { id: 'x2', target: 3, coefs: [[4, -2, 1]] },\n    ],\n    layers: [\n      { rows: 3, cols: 4, cell: 97 },\n      { rows: 2, cols: 3, cell: 90 },\n    ],\n    railMax: 7,\n    starTimes: [30, 50, 85],\n  },\n  {\n    id: 3,\n    name: '三族同台',\n    brief: '加上一族常数项',\n    families: [\n      { id: 'x', target: 9, coefs: [[6, 5, -2]] },\n      { id: 'x2', target: 4, coefs: [[3, -1, 2]] },\n      { id: 'num', target: 5, coefs: [[4, -6, 7]] },\n    ],\n    layers: [\n      { rows: 3, cols: 5, cell: 89 },\n      { rows: 2, cols: 4, cell: 96 },\n      { rows: 2, cols: 2, cell: 90 },\n    ],\n    railMax: 7,\n    starTimes: [45, 70, 110],\n  },\n  {\n    id: 4,\n    name: '乘积项 xy',\n    brief: 'xy 自成一族，字母部分必须完全一样',\n    families: [\n      { id: 'x', target: 5, coefs: [[4, 3, -2]] },\n      { id: 'y', target: 6, coefs: [[5, -1, 2]] },\n      { id: 'xy', target: 4, coefs: [[3, -2, 3]] },\n      { id: 'num', target: 3, coefs: [[5, -6, 4]] },\n    ],\n    layers: [\n      { rows: 3, cols: 5, cell: 89 },\n      { rows: 2, cols: 4, cell: 96 },\n      { rows: 2, cols: 2, cell: 90 },\n    ],\n    railMax: 7,\n    starTimes: [55, 85, 130],\n  },\n  {\n    id: 5,\n    name: '分数系数',\n    brief: '系数是分数也一样合并，结果保持整齐',\n    families: [\n      { id: 'x', target: 5, coefs: [[0.5, 2.25, -0.75], [3, -1.5, 1.5]] },\n      { id: 'num', target: 4, coefs: [[6, -3, 1]] },\n    ],\n    layers: [\n      { rows: 3, cols: 5, cell: 89 },\n      { rows: 2, cols: 4, cell: 96 },\n      { rows: 2, cols: 2, cell: 90 },\n    ],\n    railMax: 7,\n    starTimes: [65, 95, 150],\n  },\n  {\n    id: 6,\n    name: '四族混战',\n    brief: '看清字母，也看清指数',\n    families: [\n      { id: 'x', target: 12, coefs: [[7, 5, -2], [4, -3, 1]] },\n      { id: 'y', target: 10, coefs: [[6, -2, 1], [5, 3, -3]] },\n      { id: 'x2', target: 11, coefs: [[8, 5, -2]] },\n      { id: 'num', target: 8, coefs: [[9, -4, 3]] },\n    ],\n    layers: [\n      { rows: 4, cols: 5, cell: 89 },\n      { rows: 3, cols: 4, cell: 92 },\n      { rows: 2, cols: 2, cell: 88 },\n    ],\n    railMax: 7,\n    starTimes: [80, 120, 180],\n  },\n];\n\n/** 每关需要多少张牌 */\nfunction tileCount(cfg) {\n  return cfg.families.reduce((sum, f) => sum + 3 * f.coefs.length, 0);\n}\n\n/* ------------------------------------------------------------------ *\n * 3. 发牌\n * ------------------------------------------------------------------ */\n\nconst BOARD = { w: 520, h: 392, tile: 78 };\n\nconst NICE = [0.5, 0.25, 0.75, 0.2, 0.4, 0.6, 0.8];\n\nfunction isNice(n) {\n  return Number.isInteger(n) || NICE.some((v) => Math.abs(n - v) < 1e-9 || Math.abs(n + v) < 1e-9);\n}\n\n/**\n * 按关卡的 coefs 直接生成卡面。\n * 系数是事先设计好的（每组三张的和 = 该组能合并出的结果），\n * 所以不需要随机数，也不存在「凑不出整数」的问题。\n */\nfunction buildTiles(cfg) {\n  const tiles = [];\n  let n = 0;\n  cfg.families.forEach((fam, fi) => {\n    const F = FAMILIES[fam.id];\n    fam.coefs.forEach((group, gi) => {\n      group.forEach((coef, k) => {\n        n++;\n        tiles.push({\n          id: 't' + n,\n          groupId: 'g' + fi + '-' + gi,\n          groupSize: group.length,\n          familyId: F.id,\n          powers: F.powers,\n          coef,\n          layer: 0,\n          x: 0,\n          y: 0,\n          tilt: 0,\n          place: 'board',\n        });\n      });\n    });\n  });\n  return tiles;\n}\n\nfunction slotPositions(layers) {\n  const slots = [];\n  layers.forEach((L, li) => {\n    const cw = L.cols * L.cell;\n    const ch = L.rows * L.cell;\n    const x0 = (BOARD.w - cw) / 2;\n    const y0 = (BOARD.h - ch) / 2;\n    for (let r = 0; r < L.rows; r++) {\n      for (let c = 0; c < L.cols; c++) {\n        slots.push({\n          layer: li,\n          cx: x0 + c * L.cell + L.cell / 2,\n          cy: y0 + r * L.cell + L.cell / 2,\n          cell: L.cell,\n        });\n      }\n    }\n  });\n  return slots;\n}\n\nfunction placeTiles(tiles, slots, rng) {\n  tiles.forEach((t, i) => {\n    const s = slots[i];\n    t.layer = s.layer;\n    const amp = Math.min(15, Math.max(0, (s.cell - BOARD.tile) / 2 + 5));\n    t.x = Math.round(s.cx + (rng() * 2 - 1) * amp - BOARD.tile / 2);\n    t.y = Math.round(s.cy + (rng() * 2 - 1) * amp - BOARD.tile / 2);\n    t.tilt = Math.round((rng() * 2 - 1) * 12) / 10; // ±1.2°\n  });\n}\n\n/**\n * 分组友好的投放：把「同一组三张牌」尽量放进同一层。\n * 同层的牌互不遮挡，所以整组一定同时可点 —— 用于兜底构造必定可解的牌局。\n * 放不下的组再退回随机空位。\n */\nfunction placeGrouped(tiles, slots, rng) {\n  const byLayer = slots.reduce((m, s) => {\n    if (!m[s.layer]) m[s.layer] = [];\n    m[s.layer].push(s);\n    return m;\n  }, []);\n  const used = new Set();\n  const ordered = tiles.slice().sort((a, b) => b.groupSize - a.groupSize);\n  const leftovers = [];\n  for (const t of ordered) {\n    const gid = t.groupId;\n    const mates = ordered.filter((x) => x.groupId === gid);\n    const freeLayer = Object.keys(byLayer)\n      .map(Number)\n      .sort((a, b) => b - a) // 优先上层\n      .find((li) => byLayer[li].filter((s) => !used.has(s)).length >= mates.length);\n    if (freeLayer == null) {\n      leftovers.push(t);\n      continue;\n    }\n    for (const mate of mates) {\n      if (used.has(mate)) continue;\n      const slot = byLayer[freeLayer].find((s) => !used.has(s));\n      used.add(slot);\n      mate.layer = slot.layer;\n      const amp = Math.min(15, Math.max(0, (slot.cell - BOARD.tile) / 2 + 5));\n      mate.x = Math.round(slot.cx + (rng() * 2 - 1) * amp - BOARD.tile / 2);\n      mate.y = Math.round(slot.cy + (rng() * 2 - 1) * amp - BOARD.tile / 2);\n      mate.tilt = Math.round((rng() * 2 - 1) * 12) / 10;\n    }\n  }\n  // 剩下的（不成组的散牌）随便塞进空位\n  const rest = slots.filter((s) => !used.has(s));\n  shuffle(rest, rng);\n  leftovers.forEach((t, i) => {\n    const slot = rest[i];\n    if (!slot) return;\n    t.layer = slot.layer;\n    t.x = Math.round(slot.cx - BOARD.tile / 2);\n    t.y = Math.round(slot.cy - BOARD.tile / 2);\n    t.tilt = 0;\n  });\n  return leftovers.length === 0;\n}\n\n/** a 是否压住 b（a 在更高层且矩形相交） */\nfunction covers(a, b) {\n  if (a.layer <= b.layer) return false;\n  const inset = 4;\n  return (\n    a.x + inset < b.x + BOARD.tile &&\n    a.x + BOARD.tile - inset > b.x &&\n    a.y + inset < b.y + BOARD.tile &&\n    a.y + BOARD.tile - inset > b.y\n  );\n}\n\n/* ---------------------------- 规则与模拟 ---------------------------- */\n\n/** 终局判定：桌面清空，且卡槽要么空、要么正好剩同类三张（会被收尾规则合并掉） */\nfunction isRoundClear(r) {\n  // 卡槽必须也清空 —— 不能只看「桌面没牌了」。\n  // 桌子清空时卡槽里可能还留着这个家族最后三张（正好可以靠收尾规则消掉），\n  // 那种情况会把「还要再走一步」误判成通关；更糟的是求解器会在这里截断方案，\n  // 留下一两张永远消不掉的散牌。\n  return !boardTiles(r).length && r.rail.length === 0;\n}\n\n\n/** 桌面（未拿走）的牌 */\nfunction boardTiles(round) {\n  return round.tiles.filter((t) => t.place === 'board');\n}\n\n/** 当前可以点击的牌（没有被上层牌压住） */\nfunction accessibleTiles(round) {\n  const board = boardTiles(round);\n  return board.filter((b) => !board.some((a) => a !== b && covers(a, b)));\n}\n\n/** 卡槽里同族计数 */\nfunction railCounts(rail) {\n  const m = new Map();\n  for (const t of rail) m.set(t.familyId, (m.get(t.familyId) || 0) + 1);\n  return m;\n}\n\n/**\n * 落轨：把一张牌放进卡槽，若同族满 3 张立即消除。\n * 返回被消除的牌（最多 3 张）。\n */\nfunction railPush(rail, tile) {\n  // 幂等保护：applyMove 会先把牌 push 进 rail，再调用本函数检查是否可消。\n  // 早期版本这里无条件再 push 一次，导致同一张牌在卡槽里出现两份，\n  // 于是「三张同类项」永远凑不齐 —— 整个游戏直接坏掉。\n  if (rail.indexOf(tile) < 0) rail.push(tile);\n  const cleared = [];\n  const same = rail.filter((t) => t.familyId === tile.familyId);\n  if (same.length >= 3) cleared.push(...same.slice(0, 3));\n  // 收尾规则：如果卡槽里正好是同族三张，也一并合并掉（等价于连锁消除）\n  if (rail.length === 3 && rail[0].familyId === rail[1].familyId && rail[1].familyId === rail[2].familyId) {\n    for (const t of rail) if (cleared.indexOf(t) < 0) cleared.push(t);\n  }\n  for (const c of cleared) {\n    const i = rail.indexOf(c);\n    if (i >= 0) rail.splice(i, 1);\n  }\n  return cleared;\n}\n\n/**\n * 精确复刻 applyMove 的卡槽推演（不修改原对象）。\n *\n * 教训：早期版本用「整批走完才算消」的近似模型，而 applyMove 是「逐张落轨、\n * 随到随消」，两者在连锁消除时会算出不同占位，于是求解器会给出实际走不通的方案。\n * 现在这里直接复用 railPush，保证与真实落地逻辑逐张一致。\n */\nfunction railAfter(rail, railMax, tiles) {\n  const next = rail.slice();\n  let cleared = 0;\n  for (const t of tiles) {\n    const done = railPush(next, t);\n    cleared += done.length;\n    if (next.length > railMax) return { ok: false, cleared, occ: next.length };\n  }\n  return { ok: true, cleared, occ: next.length };\n}\n\n/** 兼容旧名：现在它就是精确推演 */\nconst simulateRail = railAfter;\n\nfunction cloneRound(round) {\n  return {\n    tiles: round.tiles.map((t) => ({ ...t })),\n    rail: round.rail.slice(),\n    railMax: round.railMax,\n    moves: 0,\n  };\n}\n\n/** 执行走法（会修改 round） */\nfunction applyMove(round, moveTiles) {\n  const cleared = [];\n  for (const t of moveTiles) {\n    const tile = round.tiles.find((x) => x.id === t.id);\n    if (!tile || tile.place !== 'board') continue;\n    tile.place = 'rail';\n    round.rail.push(tile);\n    round.moves++;\n    for (const c of railPush(round.rail, tile)) cleared.push(c);\n  }\n  for (const t of cleared) t.place = 'gone';\n  round.rail = round.rail.filter((t) => t.place === 'rail');\n  round.rail.forEach((t, i) => (t.railIndex = i));\n  return cleared;\n}\n\nfunction combinations(arr, k, cap) {\n  const out = [];\n  const cur = [];\n  (function rec(start) {\n    if (out.length >= cap) return;\n    if (cur.length === k) {\n      out.push(cur.slice());\n      return;\n    }\n    for (let i = start; i < arr.length; i++) {\n      cur.push(arr[i]);\n      rec(i + 1);\n      cur.pop();\n      if (out.length >= cap) return;\n    }\n  })(0);\n  return out;\n}\n\n/**\n * 候选走法（按优先度）：\n *   0 类：落轨立刻凑满三张（净占 0 格，最安全）\n *   1 类：桌面上三张同类且都可点\n *   2 类：单张（垫牌）\n */\nfunction candidateMoves(round) {\n  const acc = accessibleTiles(round);\n  const counts = railCounts(round.rail);\n  const byFam = new Map();\n  for (const t of acc) {\n    if (!byFam.has(t.familyId)) byFam.set(t.familyId, []);\n    byFam.get(t.familyId).push(t);\n  }\n  const moves = [];\n  for (const [fam, list] of byFam) {\n    const have = counts.get(fam) || 0;\n    // 0 类：补上卡槽里缺的那一两张，落轨立刻消掉\n    if (have > 0) {\n      const need = 3 - have;\n      if (need > 0 && list.length >= need) {\n        for (const c of combinations(list, need, 10)) moves.push({ tiles: c, prio: 0, fam });\n      }\n    }\n    // 1 类：桌面上直接凑三张。\n    // 注意：即使卡槽里已经有同族牌，这一步也依然要考虑 ——\n    // 「先在桌面上凑齐三张、一起落轨」是完全正常的走法，\n    // 早期版本漏了它，导致求解器只会一张一张垫牌，最后卡槽堵死。\n    if (list.length >= 3) {\n      for (const c of combinations(list, 3, 10)) moves.push({ tiles: c, prio: 1, fam });\n    }\n  }\n  for (const [fam, list] of byFam) {\n    if ((counts.get(fam) || 0) > 0) continue;\n    const ranked = list.slice().sort((a, b) => b.coef - a.coef);\n    for (const t of ranked) moves.push({ tiles: [t], prio: 2, fam });\n  }\n  moves.sort((a, b) => a.prio - b.prio || b.tiles.length - a.tiles.length);\n  return moves;\n}\n\n/** 用字符串哈希给牌面做一个便宜的「局面指纹」（仅用于记忆化，不需要密码学强度） */\nfunction cheapHash(str) {\n  let h = 2166136261 >>> 0;\n  for (let i = 0; i < str.length; i++) {\n    h ^= str.charCodeAt(i);\n    h = Math.imul(h, 16777619);\n  }\n  return h >>> 0;\n}\n\n/**\n * 把一条走法序列真正回放一遍，只有最后「桌面空 + 卡槽空」才算有效方案。\n * 求解器内部拼装路径的逻辑比较复杂，这里用回放做最终把关 ——\n * 宁可多花 1~3ms，也绝不把「走不通的方案」当作提示或可解性证明。\n */\nfunction isSolutionValid(round, solution) {\n  if (!solution || !solution.length) return false;\n  const q = cloneRound(round);\n  for (const ids of solution) {\n    const tiles = ids.map((id) => q.tiles.find((t) => t.id === id)).filter(Boolean);\n    if (tiles.length !== ids.length) return false;\n    if (tiles.some((t) => t.place !== 'board')) return false;\n    if (!railAfter(q.rail, q.railMax, tiles).ok) return false;\n    applyMove(q, tiles);\n  }\n  return isRoundClear(q);\n}\n\n/** 求解并回放校验；只有真正走得通的方案才会被返回 */\nfunction solveVerified(round, limits) {\n  const path = solveRound(round, limits);\n  if (!path) return null;\n  return isSolutionValid(round, path) ? path : null;\n}\n\n/**\n * 求解器：候选走法排序 + 有限回溯 + 记忆化。\n *\n * 实现上只保留一份「局面模型」：桌面牌集合 + 卡槽牌数组，\n * 每一步都用 railPush（与游戏落地完全同一个函数）推演卡槽。\n * 这样求解器的世界与真实游戏逐张一致，不会出现「算出来能通、实际走不通」。\n */\nfunction solveRound(round, limits) {\n  const maxDepth = (limits && limits.maxDepth) || 80;\n  const maxNodes = (limits && limits.maxNodes) || 200000;\n  let nodes = 0;\n  const memo = new Set();\n\n  const rec = (board, rail, seq, depth) => {\n    if (++nodes > maxNodes || depth > maxDepth) return null;\n    if (!board.length) return rail.length === 0 ? seq : null;\n\n    const key =\n      board\n        .map((t) => t.id)\n        .sort()\n        .join(',') +\n      '|' +\n      rail\n        .map((t) => t.familyId)\n        .sort()\n        .join(',');\n    if (memo.has(key)) return null;\n    memo.add(key);\n\n    const pseudo = { tiles: board, rail };\n    const seen = new Set();\n    for (const mv of candidateMoves(pseudo)) {\n      const tiles = mv.tiles;\n      if (!tiles.length) continue;\n      const mvKey = tiles.map((t) => t.id).join(',');\n      if (seen.has(mvKey)) continue;\n      seen.add(mvKey);\n\n      // 逐张落轨（与 applyMove 完全同一条路径）\n      const nextRail = rail.slice();\n      let overflow = false;\n      for (const t of tiles) {\n        railPush(nextRail, t);\n        if (nextRail.length > railMaxOf(round)) {\n          overflow = true;\n          break;\n        }\n      }\n      if (overflow) continue;\n\n      const ids = new Set(tiles.map((t) => t.id));\n      const nextBoard = board.filter((t) => !ids.has(t.id));\n      const out = rec(nextBoard, nextRail, seq.concat([tiles.map((t) => t.id)]), depth + 1);\n      if (out) return out;\n    }\n    return null;\n  };\n\n  const allTiles = boardTiles(round);\n  return rec(allTiles, round.rail.slice(), [], 0);\n}\n\nfunction railMaxOf(round) {\n  return round.railMax;\n}\n\n/**\n * 贪心模拟：完全按「见三张就合」的直觉走。\n * 用来评估一副牌对初中生是否顺手（能不能一路顺畅清空）。\n */\nfunction greedyPlay(round) {\n  const r = cloneRound(round);\n  let guard = 0;\n  let railPeak = r.rail.length;\n  while (boardTiles(r).length && guard++ < 200) {\n    const moves = candidateMoves(r).filter((m) => railAfter(r.rail, r.railMax, m.tiles).ok);\n    if (!moves.length) break;\n    const clearers = moves.filter((m) => simulateRail(r.rail, r.railMax, m.tiles).cleared > 0);\n    let mv;\n    if (clearers.length) {\n      clearers.sort(\n        (a, b) =>\n          simulateRail(r.rail, r.railMax, b.tiles).cleared - simulateRail(r.rail, r.railMax, a.tiles).cleared\n      );\n      mv = clearers[0];\n    } else {\n      const singles = moves.filter((m) => m.prio === 2 && m.tiles.length === 1);\n      if (!singles.length) break;\n      const acc = accessibleTiles(r);\n      const famCount = new Map();\n      for (const t of acc) famCount.set(t.familyId, (famCount.get(t.familyId) || 0) + 1);\n      singles.sort((a, b) => (famCount.get(b.fam) || 0) - (famCount.get(a.fam) || 0));\n      mv = singles[0];\n    }\n    applyMove(\n      r,\n      mv.tiles.map((t) => r.tiles.find((x) => x.id === t.id))\n    );\n    railPeak = Math.max(railPeak, r.rail.length);\n  }\n  return {\n    done: isRoundClear(r),\n    cleared: r.tiles.filter((t) => t.place === 'gone').length,\n    railLeft: r.rail.length,\n    railPeak,\n    steps: r.moves,\n  };\n}\n\n/* ---------------------------- 对外发牌 API ---------------------------- */\n\n/**\n * 生成一关。保证：\n *   1. 每个家族的系数之和恒等于 cfg.targets（数学结果固定且整齐）\n *   2. 牌局在比真实卡槽更小的容量下就被求解器验证过 → 一定可解\n *   3. 尽量挑一副「贪心打法也能打通」的牌\n */\nfunction makeRound(cfg, seed) {\n  const slots = slotPositions(cfg.layers);\n  const need = tileCount(cfg);\n  if (slots.length < need) {\n    throw new Error('布局格子不够：需要 ' + need + ' 个格子，只有 ' + slots.length + ' 个');\n  }\n  const rng = makeRng(seed >>> 0 || 1);\n  // 关键：先用种子打乱格子再取前 need 个。\n  // 否则永远取到底层的格子，上层就永远压不住任何牌（无法形成「被压住的牌」）。\n  const chosen = shuffle(slots.slice(), rng).slice(0, need);\n\n  // 发牌策略：\n  //   1. 便宜的 greedyPlay 预筛，扔掉明显走不通的牌\n  //   2. 用「真实卡槽容量」做严格求解 + 回放校验，保证一定可解\n  //   3. 追求「余量」：优先选只用 railMax-1 个卡槽就能解的牌（玩家有容错空间）\n  //   4. 整体有时间预算，点「下一关」不会卡住课堂\n  const TIME_BUDGET = 800;\n  const startedAt = Date.now();\n  const realRail = cfg.railMax;\n  const tightRail = Math.max(5, cfg.railMax - 1);\n\n  const verify = (tiles, railMax, maxNodes) =>\n    solveVerified(\n      { tiles: tiles.map((t) => ({ ...t })), rail: [], railMax, moves: 0 },\n      { maxDepth: 90, maxNodes }\n    );\n\n  let fallback = null;\n  for (let attempt = 0; attempt < 500; attempt++) {\n    if (Date.now() - startedAt > TIME_BUDGET) break;\n\n    const tiles = buildTiles(cfg);\n    const pool = chosen.slice();\n    shuffle(pool, rng);\n    shuffle(tiles, rng);\n    placeTiles(tiles, pool, rng);\n\n    const g = greedyPlay({ tiles: tiles.map((t) => ({ ...t })), rail: [], railMax: realRail, moves: 0 });\n    // 贪心能一路打通 → 必定可解，而且体验最顺\n    if (g.done) {\n      return finalize(cfg, seed, tiles, solveRound({ tiles: tiles.map((t) => ({ ...t })), rail: [], railMax: realRail, moves: 0 }, { maxDepth: 90, maxNodes: 60000 }) || g.path, g);\n    }\n    if (g.cleared < need * 0.5) continue;\n\n    // 余量优先：先用更小的卡槽试试\n    const tight = verify(tiles, tightRail, 90000);\n    if (tight) return finalize(cfg, seed, tiles, tight, g);\n\n    if (!fallback) {\n      const real = verify(tiles, realRail, 150000);\n      if (real) {\n        fallback = { tiles, solution: real, greedy: g };\n        // 已经拿到可解牌局，再花一点时间看能不能找到「有余量」的\n        if (Date.now() - startedAt > TIME_BUDGET * 0.6) break;\n      }\n    }\n  }\n\n  if (fallback) return finalize(cfg, seed, fallback.tiles, fallback.solution, fallback.greedy);\n\n  // 兜底：分组友好投放（每组三张放同一层），几乎必定可解\n  const HARD_DEADLINE = startedAt + 4000;\n  for (let attempt = 0; attempt < 300 && Date.now() < HARD_DEADLINE; attempt++) {\n    const tiles = buildTiles(cfg);\n    const pool = shuffle(slots.slice(), rng).slice(0, need);\n    shuffle(tiles, rng);\n    placeGrouped(tiles, pool, rng);\n    const solved = verify(tiles, realRail, 150000);\n    if (!solved) continue;\n    const g = greedyPlay({ tiles: tiles.map((t) => ({ ...t })), rail: [], railMax: realRail, moves: 0 });\n    return finalize(cfg, seed, tiles, solved, g);\n  }\n\n  throw new Error('第 ' + cfg.id + ' 关发牌失败，请调整布局或系数范围');\n}\n\n/** 组装对外返回的 round 对象 */\nfunction finalize(cfg, seed, tiles, solution, greedy) {\n  const families = cfg.families.map((f) => ({ ...FAMILIES[f.id], powers: { ...FAMILIES[f.id].powers } }));\n  tiles.forEach((t) => (t.place = 'board'));\n  const round = createRound(tiles, cfg.railMax);\n  round.cfg = cfg;\n  round.seed = seed;\n  round.families = families;\n  round.answer = answerText(\n    families,\n    cfg.families.map((f) => f.target)\n  );\n  round.solution = solution;\n  round.greedy = greedy;\n  return round;\n}\n\n/** 由牌堆构造一个可玩的 round 对象（tiles / rail / railMax） */\nfunction createRound(tiles, railMax) {\n  return {\n    tiles: tiles.map((t) => ({ ...t, place: 'board' })),\n    rail: [],\n    railMax,\n    moves: 0,\n  };\n}\n\nfunction makeLevel(levelId, seed) {\n  const cfg = LEVELS.find((l) => l.id === levelId);\n  if (!cfg) throw new Error('没有第 ' + levelId + ' 关');\n  return makeRound(cfg, seed >>> 0 || 1);\n}\n\n/** 星级：快 + 少用提示 = 三星 */\nfunction starsFor(cfg, seconds, hints) {\n  const t = cfg.starTimes;\n  let stars = seconds <= t[0] ? 3 : seconds <= t[1] ? 2 : 1;\n  if (hints >= 3 && stars === 3) stars = 2;\n  if (hints >= 6 && stars > 1) stars = 1;\n  return stars;\n}\n\n/**\n * 找出行法序列里第一个「在当前局面真的能执行」的步骤。\n * 玩家不一定照着提示走，所以缓存里的前几步可能已经作废 —— 往前找，\n * 而不是整条丢掉（整条丢掉会让玩家在一个仍然有解的局面里收到「无路可走」）。\n */\nfunction firstPlayableStep(round, solution) {\n  const acc = accessibleTiles(round);\n  for (let i = 0; i < solution.length; i++) {\n    const ids = solution[i];\n    if (!ids || !ids.length) continue;\n    const tiles = ids.map((id) => round.tiles.find((t) => t.id === id)).filter(Boolean);\n    if (tiles.length !== ids.length) continue;\n    if (!tiles.every((t) => t.place === 'board' && acc.indexOf(t) >= 0)) continue;\n    if (!railAfter(round.rail, round.railMax, tiles).ok) continue;\n    return { tiles, index: i };\n  }\n  return null;\n}\n\nfunction findHint(round, solution) {\n  const acc = accessibleTiles(round);\n  const counts = railCounts(round.rail);\n\n  // 缓存里记录「用完这次提示之后，桌面上应该还剩几张牌」。\n  // 玩家如果照做了，这个数字就会对上；一旦对不上说明方案已经作废，必须重新求解。\n  // （早期版本只检查「第一步还能不能点」，缓存走偏时会把玩家带进死路。）\n  const boardNow = boardTiles(round).length;\n  const cacheOk = solution && solution.length && solution.expectBoard === boardNow;\n\n  let path = cacheOk ? solution : null;\n  if (!path) {\n    path = solveVerified(cloneRound(round), { maxDepth: 90, maxNodes: 200000 });\n  }\n\n  if (path && path.length) {\n    const step = firstPlayableStep(round, path);\n    if (step && step.tiles.length) {\n      // 关键：提示给出的牌 **必须就是方案里的那一步**，不能另挑同族别的牌。\n      // 否则调用方（UI 或自动化）跟着提示点完之后，方案的后续步骤就对不上了，\n      // 缓存立刻失效 —— 这是之前最难查的一类不一致。\n      const rest = step.index > 0 ? path.slice(step.index) : path;\n      const tiles = rest[0]\n        .map((id) => round.tiles.find((t) => t.id === id))\n        .filter(Boolean);\n      const playableNow = tiles.filter((t) => t.place === 'board' && acc.indexOf(t) >= 0);\n      if (playableNow.length !== tiles.length || !tiles.length) {\n        return null; // 方案与当前局面不符，交给上层重新求解\n      }\n      const plan = rest.slice();\n      plan.expectBoard = boardNow - tiles.length;\n      return {\n        tiles,\n        familyId: tiles[0].familyId,\n        fromRail: counts.get(tiles[0].familyId) || 0,\n        kind: tiles.length > 1 ? 'triple' : 'solver',\n        solution: plan,\n      };\n    }\n  }\n\n  // ---- 兜底：局面本身已经走不通了（玩家没照提示走导致的），\n  //      给一张最合理的牌让学生还能继续操作，并靠「撤销」救回来。\n  if (!acc.length) return null;\n  let best = acc[0];\n  let bestScore = -1;\n  for (const t of acc) {\n    const score = (counts.get(t.familyId) || 0) * 10 + acc.filter((x) => x.familyId === t.familyId).length;\n    if (score > bestScore) {\n      bestScore = score;\n      best = t;\n    }\n  }\n  return {\n    tiles: [best],\n    familyId: best.familyId,\n    fromRail: counts.get(best.familyId) || 0,\n    kind: 'single',\n  };\n}\n\n/** 判断某张牌此刻是否可以点 */\nfunction isAccessible(round, tile) {\n  if (tile.place !== 'board') return false;\n  const board = boardTiles(round);\n  return !board.some((a) => a !== tile && covers(a, tile));\n}\n\n/* ---------------------------- 默认导出 ---------------------------- */\n\nconst GameEngine = {\n  SUP,\n  MINUS,\n  CDOT,\n  TIMES,\n  FAMILIES,\n  LEVELS,\n  BOARD,\n  makeRng,\n  hashSeed,\n  letterPart,\n  coefText,\n  renderTerm,\n  renderSignedTerm,\n  renderExpanded,\n  joinTerms,\n  equationText,\n  answerText,\n  tileCount,\n  makeRound,\n  makeLevel,\n  createRound,\n  solveVerified,\n  isSolutionValid,\n  starsFor,\n  boardTiles,\n  accessibleTiles,\n  isAccessible,\n  railCounts,\n  railPush,\n  simulateRail,\n  applyMove,\n  solveRound,\n  greedyPlay,\n  isRoundClear,\n  railAfter,\n  findHint,\n};\n\n\nif (typeof window !== 'undefined') window.GameEngine = GameEngine;\n";
+(function () {
+/*!
+ * 同类项·三消 —— 游戏核心逻辑（纯函数，无 DOM 依赖）
+ * 初中数学「合并同类项」教学小游戏
+ *
+ * 该文件既可被浏览器作为普通脚本加载（挂到 window.GameEngine），
+ * 也可被 Node 直接 import 做自动化测试。
+ *
+ * 核心设计：
+ *   - 「先定答案，再倒推卡面」：每个同类项家族的系数之和恒等于预设 targets，
+ *     所以任何时候合并结果都是一致的、干净的整数（或最简分数）。
+ *   - 「发牌必可解」：每副牌都用贪心+有限回溯求解器验证过，绝不出现死局。
+ */
+
+const SUP = { 2: '\u00B2', 3: '\u00B3', 4: '\u2074' }; // ² ³ ⁴
+const MINUS = '\u2212'; // 数学减号 −（比连字符 - 更规范）
+const CDOT = '\u00B7'; // 乘号 ·
+const TIMES = '\u00D7'; // 大字乘号 ×
+
+/* ------------------------------------------------------------------ *
+ * 0. 工具
+ * ------------------------------------------------------------------ */
+
+/** 可复现随机数（mulberry32） */
+function makeRng(seed) {
+  let a = seed >>> 0;
+  return function rng() {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hashSeed(str) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < String(str).length; i++) {
+    h ^= String(str).charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+const round6 = (n) => Math.round(n * 1e6) / 1e6;
+
+function shuffle(arr, rng) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const t = arr[i];
+    arr[i] = arr[j];
+    arr[j] = t;
+  }
+  return arr;
+}
+
+/* ------------------------------------------------------------------ *
+ * 1. 同类项「家族」定义
+ *    合并同类项的依据：所含字母相同，并且相同字母的指数也相同。
+ *    常数项（不含字母）自成一族。
+ * ------------------------------------------------------------------ */
+
+const FAMILIES = {
+  x: { id: 'x', powers: { x: 1 }, label: '\u4E00\u6B21\u9879 x', icon: 'triangle', accent: 'indigo' },
+  y: { id: 'y', powers: { y: 1 }, label: '\u4E00\u6B21\u9879 y', icon: 'triangle', accent: 'amber' },
+  z: { id: 'z', powers: { z: 1 }, label: '\u4E00\u6B21\u9879 z', icon: 'triangle', accent: 'plum' },
+  a: { id: 'a', powers: { a: 1 }, label: '\u4E00\u6B21\u9879 a', icon: 'triangle', accent: 'plum' },
+  b: { id: 'b', powers: { b: 1 }, label: '\u4E00\u6B21\u9879 b', icon: 'triangle', accent: 'teal' },
+  x2: { id: 'x2', powers: { x: 2 }, label: '\u4E8C\u6B21\u9879 x\u00B2', icon: 'diamond', accent: 'vermilion' },
+  y2: { id: 'y2', powers: { y: 2 }, label: '\u4E8C\u6B21\u9879 y\u00B2', icon: 'diamond', accent: 'forest' },
+  z2: { id: 'z2', powers: { z: 2 }, label: '\u4E8C\u6B21\u9879 z\u00B2', icon: 'diamond', accent: 'plum' },
+  xy: { id: 'xy', powers: { x: 1, y: 1 }, label: '\u4E58\u79EF\u9879 xy', icon: 'square', accent: 'teal' },
+  ab: { id: 'ab', powers: { a: 1, b: 1 }, label: '\u4E58\u79EF\u9879 ab', icon: 'square', accent: 'indigo' },
+  num: { id: 'num', powers: {}, label: '\u5E38\u6570\u9879', icon: 'circle', accent: 'gold' },
+};
+
+const LETTER = { x: 'x', y: 'y', z: 'z', a: 'a', b: 'b' };
+
+/** 字母部分（不含系数）：x、y²、x·y */
+function letterPart(powers) {
+  return Object.keys(powers)
+    .sort()
+    .map((k) => LETTER[k] + (powers[k] === 1 ? '' : SUP[powers[k]] || '^' + powers[k]))
+    .join(CDOT);
+}
+
+/** 系数文本：3 / -2 / 1/4 / -1/3 / 0.5 */
+function coefText(coef) {
+  if (Number.isInteger(coef)) return String(coef);
+  const EPS = 1e-9;
+  for (let d = 2; d <= 20; d++) {
+    const n = coef * d;
+    if (Math.abs(n - Math.round(n)) < EPS) {
+      const num = Math.round(n);
+      return (num < 0 ? MINUS + Math.abs(num) : String(num)) + '/' + d;
+    }
+  }
+  return String(coef);
+}
+
+function termBody(abs, letters) {
+  if (letters === '') return String(abs); // 常数项必须写出数字
+  if (abs === 1) return letters; // 1x 写成 x
+  return coefText(abs) + letters;
+}
+
+/** 带符号的项，用于算式：3x / −5x / +x / −x² / +8 */
+function renderSignedTerm(coef, powers) {
+  const letters = letterPart(powers);
+  return (coef < 0 ? MINUS : '+') + termBody(Math.abs(coef), letters);
+}
+
+/** 不带正号的项，用于卡片正面：3x / −5x / x / x² / x·y / −3 */
+function renderTerm(coef, powers) {
+  const t = renderSignedTerm(coef, powers);
+  return t[0] === '+' ? t.slice(1) : t;
+}
+
+/** 展开写法，用于「为什么」说明：3×x² / 1×x */
+function renderExpanded(coef, powers) {
+  const letters = letterPart(powers);
+  return letters === '' ? coefText(coef) : coefText(coef) + TIMES + letters;
+}
+
+/** 把若干项拼成算式：3x + 5x − 2x = 6x */
+function joinTerms(items) {
+  if (!items.length) return '0';
+  const parts = items.map((it) => renderSignedTerm(it.coef, it.powers));
+  const head = parts[0][0] === '+' ? parts[0].slice(1) : parts[0];
+  return head + parts.slice(1).map((p) => ' ' + p[0] + ' ' + p.slice(1)).join('');
+}
+
+/** 三张牌合并的算式：3x + 5x − 2x = 6x */
+function equationText(tiles) {
+  const sum = round6(tiles.reduce((s, t) => s + t.coef, 0));
+  return joinTerms(tiles.map((t) => ({ coef: t.coef, powers: t.powers }))) + ' = ' + renderTerm(sum, tiles[0].powers);
+}
+
+/** 最终答案：把所有家族合并之后的结果 */
+function answerText(families, targets) {
+  return joinTerms(
+    families
+      .map((f, i) => ({ coef: targets[i], powers: f.powers }))
+      .filter((it) => it.coef !== 0)
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 2. 关卡数据
+ *    targets —— 该家族所有系数之和（即最终答案），先定答案再倒推卡面
+ *    具体格式见文件内 LEVELS 的注释
+ * ------------------------------------------------------------------ */
+
+/**
+ * 关卡数据。
+ *
+ * 每个家族用 coefs 描述：一串「三张一组」的系数。
+ *   - 每组的三个系数之和 = 该组能合并出的结果（0 表示正好抵消）
+ *   - 一个家族里所有组的和 = 这个家族的最终答案（targets）
+ * 这样设计有两个硬保证：
+ *   1. 每个家族的牌数恒为 3 的倍数 → 绝不会有牌永远凑不成三张
+ *   2. 每一组的三张牌都是一次完整的「合并同类项」，算式写出来刚好一行
+ */
+const LEVELS = [
+  {
+    id: 1,
+    name: '暖身',
+    brief: '只有 x 与 y 两族，先找找手感',
+    families: [
+      { id: 'x', target: 6, coefs: [[3, 5, -2]] },
+      { id: 'y', target: 4, coefs: [[4, -3, 3]] },
+    ],
+    layers: [
+      { rows: 3, cols: 4, cell: 97 },
+      { rows: 2, cols: 3, cell: 90 },
+    ],
+    railMax: 7,
+    starTimes: [25, 40, 70],
+  },
+  {
+    id: 2,
+    name: '小心 x²',
+    brief: 'x 和 x² 不是同类项，别放错',
+    families: [
+      { id: 'x', target: 8, coefs: [[5, 6, -3]] },
+      { id: 'x2', target: 3, coefs: [[4, -2, 1]] },
+    ],
+    layers: [
+      { rows: 3, cols: 4, cell: 97 },
+      { rows: 2, cols: 3, cell: 90 },
+    ],
+    railMax: 7,
+    starTimes: [30, 50, 85],
+  },
+  {
+    id: 3,
+    name: '三族同台',
+    brief: '加上一族常数项',
+    families: [
+      { id: 'x', target: 9, coefs: [[6, 5, -2]] },
+      { id: 'x2', target: 4, coefs: [[3, -1, 2]] },
+      { id: 'num', target: 5, coefs: [[4, -6, 7]] },
+    ],
+    layers: [
+      { rows: 3, cols: 5, cell: 89 },
+      { rows: 2, cols: 4, cell: 96 },
+      { rows: 2, cols: 2, cell: 90 },
+    ],
+    railMax: 7,
+    starTimes: [45, 70, 110],
+  },
+  {
+    id: 4,
+    name: '乘积项 xy',
+    brief: 'xy 自成一族，字母部分必须完全一样',
+    families: [
+      { id: 'x', target: 5, coefs: [[4, 3, -2]] },
+      { id: 'y', target: 6, coefs: [[5, -1, 2]] },
+      { id: 'xy', target: 4, coefs: [[3, -2, 3]] },
+      { id: 'num', target: 3, coefs: [[5, -6, 4]] },
+    ],
+    layers: [
+      { rows: 3, cols: 5, cell: 89 },
+      { rows: 2, cols: 4, cell: 96 },
+      { rows: 2, cols: 2, cell: 90 },
+    ],
+    railMax: 7,
+    starTimes: [55, 85, 130],
+  },
+  {
+    id: 5,
+    name: '分数系数',
+    brief: '系数是分数也一样合并，结果保持整齐',
+    families: [
+      { id: 'x', target: 5, coefs: [[0.5, 2.25, -0.75], [3, -1.5, 1.5]] },
+      { id: 'num', target: 4, coefs: [[6, -3, 1]] },
+    ],
+    layers: [
+      { rows: 3, cols: 5, cell: 89 },
+      { rows: 2, cols: 4, cell: 96 },
+      { rows: 2, cols: 2, cell: 90 },
+    ],
+    railMax: 7,
+    starTimes: [65, 95, 150],
+  },
+  {
+    id: 6,
+    name: '四族混战',
+    brief: '看清字母，也看清指数',
+    families: [
+      { id: 'x', target: 12, coefs: [[7, 5, -2], [4, -3, 1]] },
+      { id: 'y', target: 10, coefs: [[6, -2, 1], [5, 3, -3]] },
+      { id: 'x2', target: 11, coefs: [[8, 5, -2]] },
+      { id: 'num', target: 8, coefs: [[9, -4, 3]] },
+    ],
+    layers: [
+      { rows: 4, cols: 5, cell: 89 },
+      { rows: 3, cols: 4, cell: 92 },
+      { rows: 2, cols: 2, cell: 88 },
+    ],
+    railMax: 7,
+    starTimes: [80, 120, 180],
+  },
+];
+
+/** 每关需要多少张牌 */
+function tileCount(cfg) {
+  return cfg.families.reduce((sum, f) => sum + 3 * f.coefs.length, 0);
+}
+
+/* ------------------------------------------------------------------ *
+ * 3. 发牌
+ * ------------------------------------------------------------------ */
+
+const BOARD = { w: 520, h: 392, tile: 78 };
+
+const NICE = [0.5, 0.25, 0.75, 0.2, 0.4, 0.6, 0.8];
+
+function isNice(n) {
+  return Number.isInteger(n) || NICE.some((v) => Math.abs(n - v) < 1e-9 || Math.abs(n + v) < 1e-9);
+}
+
+/**
+ * 按关卡的 coefs 直接生成卡面。
+ * 系数是事先设计好的（每组三张的和 = 该组能合并出的结果），
+ * 所以不需要随机数，也不存在「凑不出整数」的问题。
+ */
+function buildTiles(cfg) {
+  const tiles = [];
+  let n = 0;
+  cfg.families.forEach((fam, fi) => {
+    const F = FAMILIES[fam.id];
+    fam.coefs.forEach((group, gi) => {
+      group.forEach((coef, k) => {
+        n++;
+        tiles.push({
+          id: 't' + n,
+          groupId: 'g' + fi + '-' + gi,
+          groupSize: group.length,
+          familyId: F.id,
+          powers: F.powers,
+          coef,
+          layer: 0,
+          x: 0,
+          y: 0,
+          tilt: 0,
+          place: 'board',
+        });
+      });
+    });
+  });
+  return tiles;
+}
+
+function slotPositions(layers) {
+  const slots = [];
+  layers.forEach((L, li) => {
+    const cw = L.cols * L.cell;
+    const ch = L.rows * L.cell;
+    const x0 = (BOARD.w - cw) / 2;
+    const y0 = (BOARD.h - ch) / 2;
+    for (let r = 0; r < L.rows; r++) {
+      for (let c = 0; c < L.cols; c++) {
+        slots.push({
+          layer: li,
+          cx: x0 + c * L.cell + L.cell / 2,
+          cy: y0 + r * L.cell + L.cell / 2,
+          cell: L.cell,
+        });
+      }
+    }
+  });
+  return slots;
+}
+
+function placeTiles(tiles, slots, rng) {
+  tiles.forEach((t, i) => {
+    const s = slots[i];
+    t.layer = s.layer;
+    const amp = Math.min(15, Math.max(0, (s.cell - BOARD.tile) / 2 + 5));
+    t.x = Math.round(s.cx + (rng() * 2 - 1) * amp - BOARD.tile / 2);
+    t.y = Math.round(s.cy + (rng() * 2 - 1) * amp - BOARD.tile / 2);
+    t.tilt = Math.round((rng() * 2 - 1) * 12) / 10; // ±1.2°
+  });
+}
+
+/**
+ * 分组友好的投放：把「同一组三张牌」尽量放进同一层。
+ * 同层的牌互不遮挡，所以整组一定同时可点 —— 用于兜底构造必定可解的牌局。
+ * 放不下的组再退回随机空位。
+ */
+function placeGrouped(tiles, slots, rng) {
+  const byLayer = slots.reduce((m, s) => {
+    if (!m[s.layer]) m[s.layer] = [];
+    m[s.layer].push(s);
+    return m;
+  }, []);
+  const used = new Set();
+  const ordered = tiles.slice().sort((a, b) => b.groupSize - a.groupSize);
+  const leftovers = [];
+  for (const t of ordered) {
+    const gid = t.groupId;
+    const mates = ordered.filter((x) => x.groupId === gid);
+    const freeLayer = Object.keys(byLayer)
+      .map(Number)
+      .sort((a, b) => b - a) // 优先上层
+      .find((li) => byLayer[li].filter((s) => !used.has(s)).length >= mates.length);
+    if (freeLayer == null) {
+      leftovers.push(t);
+      continue;
+    }
+    for (const mate of mates) {
+      if (used.has(mate)) continue;
+      const slot = byLayer[freeLayer].find((s) => !used.has(s));
+      used.add(slot);
+      mate.layer = slot.layer;
+      const amp = Math.min(15, Math.max(0, (slot.cell - BOARD.tile) / 2 + 5));
+      mate.x = Math.round(slot.cx + (rng() * 2 - 1) * amp - BOARD.tile / 2);
+      mate.y = Math.round(slot.cy + (rng() * 2 - 1) * amp - BOARD.tile / 2);
+      mate.tilt = Math.round((rng() * 2 - 1) * 12) / 10;
+    }
+  }
+  // 剩下的（不成组的散牌）随便塞进空位
+  const rest = slots.filter((s) => !used.has(s));
+  shuffle(rest, rng);
+  leftovers.forEach((t, i) => {
+    const slot = rest[i];
+    if (!slot) return;
+    t.layer = slot.layer;
+    t.x = Math.round(slot.cx - BOARD.tile / 2);
+    t.y = Math.round(slot.cy - BOARD.tile / 2);
+    t.tilt = 0;
+  });
+  return leftovers.length === 0;
+}
+
+/** a 是否压住 b（a 在更高层且矩形相交） */
+function covers(a, b) {
+  if (a.layer <= b.layer) return false;
+  const inset = 4;
+  return (
+    a.x + inset < b.x + BOARD.tile &&
+    a.x + BOARD.tile - inset > b.x &&
+    a.y + inset < b.y + BOARD.tile &&
+    a.y + BOARD.tile - inset > b.y
+  );
+}
+
+/* ---------------------------- 规则与模拟 ---------------------------- */
+
+/** 终局判定：桌面清空，且卡槽要么空、要么正好剩同类三张（会被收尾规则合并掉） */
+function isRoundClear(r) {
+  // 卡槽必须也清空 —— 不能只看「桌面没牌了」。
+  // 桌子清空时卡槽里可能还留着这个家族最后三张（正好可以靠收尾规则消掉），
+  // 那种情况会把「还要再走一步」误判成通关；更糟的是求解器会在这里截断方案，
+  // 留下一两张永远消不掉的散牌。
+  return !boardTiles(r).length && r.rail.length === 0;
+}
+
+
+/** 桌面（未拿走）的牌 */
+function boardTiles(round) {
+  return round.tiles.filter((t) => t.place === 'board');
+}
+
+/** 当前可以点击的牌（没有被上层牌压住） */
+function accessibleTiles(round) {
+  const board = boardTiles(round);
+  return board.filter((b) => !board.some((a) => a !== b && covers(a, b)));
+}
+
+/** 卡槽里同族计数 */
+function railCounts(rail) {
+  const m = new Map();
+  for (const t of rail) m.set(t.familyId, (m.get(t.familyId) || 0) + 1);
+  return m;
+}
+
+/**
+ * 落轨：把一张牌放进卡槽，若同族满 3 张立即消除。
+ * 返回被消除的牌（最多 3 张）。
+ */
+function railPush(rail, tile) {
+  // 幂等保护：applyMove 会先把牌 push 进 rail，再调用本函数检查是否可消。
+  // 早期版本这里无条件再 push 一次，导致同一张牌在卡槽里出现两份，
+  // 于是「三张同类项」永远凑不齐 —— 整个游戏直接坏掉。
+  if (rail.indexOf(tile) < 0) rail.push(tile);
+  const cleared = [];
+  const same = rail.filter((t) => t.familyId === tile.familyId);
+  if (same.length >= 3) cleared.push(...same.slice(0, 3));
+  // 收尾规则：如果卡槽里正好是同族三张，也一并合并掉（等价于连锁消除）
+  if (rail.length === 3 && rail[0].familyId === rail[1].familyId && rail[1].familyId === rail[2].familyId) {
+    for (const t of rail) if (cleared.indexOf(t) < 0) cleared.push(t);
+  }
+  for (const c of cleared) {
+    const i = rail.indexOf(c);
+    if (i >= 0) rail.splice(i, 1);
+  }
+  return cleared;
+}
+
+/**
+ * 精确复刻 applyMove 的卡槽推演（不修改原对象）。
+ *
+ * 教训：早期版本用「整批走完才算消」的近似模型，而 applyMove 是「逐张落轨、
+ * 随到随消」，两者在连锁消除时会算出不同占位，于是求解器会给出实际走不通的方案。
+ * 现在这里直接复用 railPush，保证与真实落地逻辑逐张一致。
+ */
+function railAfter(rail, railMax, tiles) {
+  const next = rail.slice();
+  let cleared = 0;
+  for (const t of tiles) {
+    const done = railPush(next, t);
+    cleared += done.length;
+    if (next.length > railMax) return { ok: false, cleared, occ: next.length };
+  }
+  return { ok: true, cleared, occ: next.length };
+}
+
+/** 兼容旧名：现在它就是精确推演 */
+const simulateRail = railAfter;
+
+function cloneRound(round) {
+  return {
+    tiles: round.tiles.map((t) => ({ ...t })),
+    rail: round.rail.slice(),
+    railMax: round.railMax,
+    moves: 0,
+  };
+}
+
+/** 执行走法（会修改 round） */
+function applyMove(round, moveTiles) {
+  const cleared = [];
+  for (const t of moveTiles) {
+    const tile = round.tiles.find((x) => x.id === t.id);
+    if (!tile || tile.place !== 'board') continue;
+    tile.place = 'rail';
+    round.rail.push(tile);
+    round.moves++;
+    for (const c of railPush(round.rail, tile)) cleared.push(c);
+  }
+  for (const t of cleared) t.place = 'gone';
+  round.rail = round.rail.filter((t) => t.place === 'rail');
+  round.rail.forEach((t, i) => (t.railIndex = i));
+  return cleared;
+}
+
+function combinations(arr, k, cap) {
+  const out = [];
+  const cur = [];
+  (function rec(start) {
+    if (out.length >= cap) return;
+    if (cur.length === k) {
+      out.push(cur.slice());
+      return;
+    }
+    for (let i = start; i < arr.length; i++) {
+      cur.push(arr[i]);
+      rec(i + 1);
+      cur.pop();
+      if (out.length >= cap) return;
+    }
+  })(0);
+  return out;
+}
+
+/**
+ * 候选走法（按优先度）：
+ *   0 类：落轨立刻凑满三张（净占 0 格，最安全）
+ *   1 类：桌面上三张同类且都可点
+ *   2 类：单张（垫牌）
+ */
+function candidateMoves(round) {
+  const acc = accessibleTiles(round);
+  const counts = railCounts(round.rail);
+  const byFam = new Map();
+  for (const t of acc) {
+    if (!byFam.has(t.familyId)) byFam.set(t.familyId, []);
+    byFam.get(t.familyId).push(t);
+  }
+  const moves = [];
+  for (const [fam, list] of byFam) {
+    const have = counts.get(fam) || 0;
+    // 0 类：补上卡槽里缺的那一两张，落轨立刻消掉
+    if (have > 0) {
+      const need = 3 - have;
+      if (need > 0 && list.length >= need) {
+        for (const c of combinations(list, need, 10)) moves.push({ tiles: c, prio: 0, fam });
+      }
+    }
+    // 1 类：桌面上直接凑三张。
+    // 注意：即使卡槽里已经有同族牌，这一步也依然要考虑 ——
+    // 「先在桌面上凑齐三张、一起落轨」是完全正常的走法，
+    // 早期版本漏了它，导致求解器只会一张一张垫牌，最后卡槽堵死。
+    if (list.length >= 3) {
+      for (const c of combinations(list, 3, 10)) moves.push({ tiles: c, prio: 1, fam });
+    }
+  }
+  for (const [fam, list] of byFam) {
+    if ((counts.get(fam) || 0) > 0) continue;
+    const ranked = list.slice().sort((a, b) => b.coef - a.coef);
+    for (const t of ranked) moves.push({ tiles: [t], prio: 2, fam });
+  }
+  moves.sort((a, b) => a.prio - b.prio || b.tiles.length - a.tiles.length);
+  return moves;
+}
+
+/** 用字符串哈希给牌面做一个便宜的「局面指纹」（仅用于记忆化，不需要密码学强度） */
+function cheapHash(str) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/**
+ * 把一条走法序列真正回放一遍，只有最后「桌面空 + 卡槽空」才算有效方案。
+ * 求解器内部拼装路径的逻辑比较复杂，这里用回放做最终把关 ——
+ * 宁可多花 1~3ms，也绝不把「走不通的方案」当作提示或可解性证明。
+ */
+function isSolutionValid(round, solution) {
+  if (!solution || !solution.length) return false;
+  const q = cloneRound(round);
+  for (const ids of solution) {
+    const tiles = ids.map((id) => q.tiles.find((t) => t.id === id)).filter(Boolean);
+    if (tiles.length !== ids.length) return false;
+    if (tiles.some((t) => t.place !== 'board')) return false;
+    if (!railAfter(q.rail, q.railMax, tiles).ok) return false;
+    applyMove(q, tiles);
+  }
+  return isRoundClear(q);
+}
+
+/** 求解并回放校验；只有真正走得通的方案才会被返回 */
+function solveVerified(round, limits) {
+  const path = solveRound(round, limits);
+  if (!path) return null;
+  return isSolutionValid(round, path) ? path : null;
+}
+
+/**
+ * 求解器：候选走法排序 + 有限回溯 + 记忆化。
+ *
+ * 实现上只保留一份「局面模型」：桌面牌集合 + 卡槽牌数组，
+ * 每一步都用 railPush（与游戏落地完全同一个函数）推演卡槽。
+ * 这样求解器的世界与真实游戏逐张一致，不会出现「算出来能通、实际走不通」。
+ */
+function solveRound(round, limits) {
+  const maxDepth = (limits && limits.maxDepth) || 80;
+  const maxNodes = (limits && limits.maxNodes) || 200000;
+  let nodes = 0;
+  const memo = new Set();
+
+  const rec = (board, rail, seq, depth) => {
+    if (++nodes > maxNodes || depth > maxDepth) return null;
+    if (!board.length) return rail.length === 0 ? seq : null;
+
+    const key =
+      board
+        .map((t) => t.id)
+        .sort()
+        .join(',') +
+      '|' +
+      rail
+        .map((t) => t.familyId)
+        .sort()
+        .join(',');
+    if (memo.has(key)) return null;
+    memo.add(key);
+
+    const pseudo = { tiles: board, rail };
+    const seen = new Set();
+    for (const mv of candidateMoves(pseudo)) {
+      const tiles = mv.tiles;
+      if (!tiles.length) continue;
+      const mvKey = tiles.map((t) => t.id).join(',');
+      if (seen.has(mvKey)) continue;
+      seen.add(mvKey);
+
+      // 逐张落轨（与 applyMove 完全同一条路径）
+      const nextRail = rail.slice();
+      let overflow = false;
+      for (const t of tiles) {
+        railPush(nextRail, t);
+        if (nextRail.length > railMaxOf(round)) {
+          overflow = true;
+          break;
+        }
+      }
+      if (overflow) continue;
+
+      const ids = new Set(tiles.map((t) => t.id));
+      const nextBoard = board.filter((t) => !ids.has(t.id));
+      const out = rec(nextBoard, nextRail, seq.concat([tiles.map((t) => t.id)]), depth + 1);
+      if (out) return out;
+    }
+    return null;
+  };
+
+  const allTiles = boardTiles(round);
+  return rec(allTiles, round.rail.slice(), [], 0);
+}
+
+function railMaxOf(round) {
+  return round.railMax;
+}
+
+/**
+ * 贪心模拟：完全按「见三张就合」的直觉走。
+ * 用来评估一副牌对初中生是否顺手（能不能一路顺畅清空）。
+ */
+function greedyPlay(round) {
+  const r = cloneRound(round);
+  let guard = 0;
+  let railPeak = r.rail.length;
+  while (boardTiles(r).length && guard++ < 200) {
+    const moves = candidateMoves(r).filter((m) => railAfter(r.rail, r.railMax, m.tiles).ok);
+    if (!moves.length) break;
+    const clearers = moves.filter((m) => simulateRail(r.rail, r.railMax, m.tiles).cleared > 0);
+    let mv;
+    if (clearers.length) {
+      clearers.sort(
+        (a, b) =>
+          simulateRail(r.rail, r.railMax, b.tiles).cleared - simulateRail(r.rail, r.railMax, a.tiles).cleared
+      );
+      mv = clearers[0];
+    } else {
+      const singles = moves.filter((m) => m.prio === 2 && m.tiles.length === 1);
+      if (!singles.length) break;
+      const acc = accessibleTiles(r);
+      const famCount = new Map();
+      for (const t of acc) famCount.set(t.familyId, (famCount.get(t.familyId) || 0) + 1);
+      singles.sort((a, b) => (famCount.get(b.fam) || 0) - (famCount.get(a.fam) || 0));
+      mv = singles[0];
+    }
+    applyMove(
+      r,
+      mv.tiles.map((t) => r.tiles.find((x) => x.id === t.id))
+    );
+    railPeak = Math.max(railPeak, r.rail.length);
+  }
+  return {
+    done: isRoundClear(r),
+    cleared: r.tiles.filter((t) => t.place === 'gone').length,
+    railLeft: r.rail.length,
+    railPeak,
+    steps: r.moves,
+  };
+}
+
+/* ---------------------------- 对外发牌 API ---------------------------- */
+
+/**
+ * 生成一关。保证：
+ *   1. 每个家族的系数之和恒等于 cfg.targets（数学结果固定且整齐）
+ *   2. 牌局在比真实卡槽更小的容量下就被求解器验证过 → 一定可解
+ *   3. 尽量挑一副「贪心打法也能打通」的牌
+ */
+function makeRound(cfg, seed) {
+  const slots = slotPositions(cfg.layers);
+  const need = tileCount(cfg);
+  if (slots.length < need) {
+    throw new Error('布局格子不够：需要 ' + need + ' 个格子，只有 ' + slots.length + ' 个');
+  }
+  const rng = makeRng(seed >>> 0 || 1);
+  // 关键：先用种子打乱格子再取前 need 个。
+  // 否则永远取到底层的格子，上层就永远压不住任何牌（无法形成「被压住的牌」）。
+  const chosen = shuffle(slots.slice(), rng).slice(0, need);
+
+  // 发牌策略：
+  //   1. 便宜的 greedyPlay 预筛，扔掉明显走不通的牌
+  //   2. 用「真实卡槽容量」做严格求解 + 回放校验，保证一定可解
+  //   3. 追求「余量」：优先选只用 railMax-1 个卡槽就能解的牌（玩家有容错空间）
+  //   4. 整体有时间预算，点「下一关」不会卡住课堂
+  const TIME_BUDGET = 800;
+  const startedAt = Date.now();
+  const realRail = cfg.railMax;
+  const tightRail = Math.max(5, cfg.railMax - 1);
+
+  const verify = (tiles, railMax, maxNodes) =>
+    solveVerified(
+      { tiles: tiles.map((t) => ({ ...t })), rail: [], railMax, moves: 0 },
+      { maxDepth: 90, maxNodes }
+    );
+
+  let fallback = null;
+  for (let attempt = 0; attempt < 500; attempt++) {
+    if (Date.now() - startedAt > TIME_BUDGET) break;
+
+    const tiles = buildTiles(cfg);
+    const pool = chosen.slice();
+    shuffle(pool, rng);
+    shuffle(tiles, rng);
+    placeTiles(tiles, pool, rng);
+
+    const g = greedyPlay({ tiles: tiles.map((t) => ({ ...t })), rail: [], railMax: realRail, moves: 0 });
+    // 贪心能一路打通 → 必定可解，而且体验最顺
+    if (g.done) {
+      return finalize(cfg, seed, tiles, solveRound({ tiles: tiles.map((t) => ({ ...t })), rail: [], railMax: realRail, moves: 0 }, { maxDepth: 90, maxNodes: 60000 }) || g.path, g);
+    }
+    if (g.cleared < need * 0.5) continue;
+
+    // 余量优先：先用更小的卡槽试试
+    const tight = verify(tiles, tightRail, 90000);
+    if (tight) return finalize(cfg, seed, tiles, tight, g);
+
+    if (!fallback) {
+      const real = verify(tiles, realRail, 150000);
+      if (real) {
+        fallback = { tiles, solution: real, greedy: g };
+        // 已经拿到可解牌局，再花一点时间看能不能找到「有余量」的
+        if (Date.now() - startedAt > TIME_BUDGET * 0.6) break;
+      }
+    }
+  }
+
+  if (fallback) return finalize(cfg, seed, fallback.tiles, fallback.solution, fallback.greedy);
+
+  // 兜底：分组友好投放（每组三张放同一层），几乎必定可解
+  const HARD_DEADLINE = startedAt + 4000;
+  for (let attempt = 0; attempt < 300 && Date.now() < HARD_DEADLINE; attempt++) {
+    const tiles = buildTiles(cfg);
+    const pool = shuffle(slots.slice(), rng).slice(0, need);
+    shuffle(tiles, rng);
+    placeGrouped(tiles, pool, rng);
+    const solved = verify(tiles, realRail, 150000);
+    if (!solved) continue;
+    const g = greedyPlay({ tiles: tiles.map((t) => ({ ...t })), rail: [], railMax: realRail, moves: 0 });
+    return finalize(cfg, seed, tiles, solved, g);
+  }
+
+  throw new Error('第 ' + cfg.id + ' 关发牌失败，请调整布局或系数范围');
+}
+
+/** 组装对外返回的 round 对象 */
+function finalize(cfg, seed, tiles, solution, greedy) {
+  const families = cfg.families.map((f) => ({ ...FAMILIES[f.id], powers: { ...FAMILIES[f.id].powers } }));
+  tiles.forEach((t) => (t.place = 'board'));
+  const round = createRound(tiles, cfg.railMax);
+  round.cfg = cfg;
+  round.seed = seed;
+  round.families = families;
+  round.answer = answerText(
+    families,
+    cfg.families.map((f) => f.target)
+  );
+  round.solution = solution;
+  round.greedy = greedy;
+  return round;
+}
+
+/** 由牌堆构造一个可玩的 round 对象（tiles / rail / railMax） */
+function createRound(tiles, railMax) {
+  return {
+    tiles: tiles.map((t) => ({ ...t, place: 'board' })),
+    rail: [],
+    railMax,
+    moves: 0,
+  };
+}
+
+function makeLevel(levelId, seed) {
+  const cfg = LEVELS.find((l) => l.id === levelId);
+  if (!cfg) throw new Error('没有第 ' + levelId + ' 关');
+  return makeRound(cfg, seed >>> 0 || 1);
+}
+
+/** 星级：快 + 少用提示 = 三星 */
+function starsFor(cfg, seconds, hints) {
+  const t = cfg.starTimes;
+  let stars = seconds <= t[0] ? 3 : seconds <= t[1] ? 2 : 1;
+  if (hints >= 3 && stars === 3) stars = 2;
+  if (hints >= 6 && stars > 1) stars = 1;
+  return stars;
+}
+
+/**
+ * 找出行法序列里第一个「在当前局面真的能执行」的步骤。
+ * 玩家不一定照着提示走，所以缓存里的前几步可能已经作废 —— 往前找，
+ * 而不是整条丢掉（整条丢掉会让玩家在一个仍然有解的局面里收到「无路可走」）。
+ */
+function firstPlayableStep(round, solution) {
+  const acc = accessibleTiles(round);
+  for (let i = 0; i < solution.length; i++) {
+    const ids = solution[i];
+    if (!ids || !ids.length) continue;
+    const tiles = ids.map((id) => round.tiles.find((t) => t.id === id)).filter(Boolean);
+    if (tiles.length !== ids.length) continue;
+    if (!tiles.every((t) => t.place === 'board' && acc.indexOf(t) >= 0)) continue;
+    if (!railAfter(round.rail, round.railMax, tiles).ok) continue;
+    return { tiles, index: i };
+  }
+  return null;
+}
+
+function findHint(round, solution) {
+  const acc = accessibleTiles(round);
+  const counts = railCounts(round.rail);
+
+  // 缓存里记录「用完这次提示之后，桌面上应该还剩几张牌」。
+  // 玩家如果照做了，这个数字就会对上；一旦对不上说明方案已经作废，必须重新求解。
+  // （早期版本只检查「第一步还能不能点」，缓存走偏时会把玩家带进死路。）
+  const boardNow = boardTiles(round).length;
+  const cacheOk = solution && solution.length && solution.expectBoard === boardNow;
+
+  let path = cacheOk ? solution : null;
+  if (!path) {
+    path = solveVerified(cloneRound(round), { maxDepth: 90, maxNodes: 200000 });
+  }
+
+  if (path && path.length) {
+    const step = firstPlayableStep(round, path);
+    if (step && step.tiles.length) {
+      // 关键：提示给出的牌 **必须就是方案里的那一步**，不能另挑同族别的牌。
+      // 否则调用方（UI 或自动化）跟着提示点完之后，方案的后续步骤就对不上了，
+      // 缓存立刻失效 —— 这是之前最难查的一类不一致。
+      const rest = step.index > 0 ? path.slice(step.index) : path;
+      const tiles = rest[0]
+        .map((id) => round.tiles.find((t) => t.id === id))
+        .filter(Boolean);
+      const playableNow = tiles.filter((t) => t.place === 'board' && acc.indexOf(t) >= 0);
+      if (playableNow.length !== tiles.length || !tiles.length) {
+        return null; // 方案与当前局面不符，交给上层重新求解
+      }
+      const plan = rest.slice();
+      plan.expectBoard = boardNow - tiles.length;
+      return {
+        tiles,
+        familyId: tiles[0].familyId,
+        fromRail: counts.get(tiles[0].familyId) || 0,
+        kind: tiles.length > 1 ? 'triple' : 'solver',
+        solution: plan,
+      };
+    }
+  }
+
+  // ---- 兜底：局面本身已经走不通了（玩家没照提示走导致的），
+  //      给一张最合理的牌让学生还能继续操作，并靠「撤销」救回来。
+  if (!acc.length) return null;
+  let best = acc[0];
+  let bestScore = -1;
+  for (const t of acc) {
+    const score = (counts.get(t.familyId) || 0) * 10 + acc.filter((x) => x.familyId === t.familyId).length;
+    if (score > bestScore) {
+      bestScore = score;
+      best = t;
+    }
+  }
+  return {
+    tiles: [best],
+    familyId: best.familyId,
+    fromRail: counts.get(best.familyId) || 0,
+    kind: 'single',
+  };
+}
+
+/** 判断某张牌此刻是否可以点 */
+function isAccessible(round, tile) {
+  if (tile.place !== 'board') return false;
+  const board = boardTiles(round);
+  return !board.some((a) => a !== tile && covers(a, tile));
+}
+
+/* ---------------------------- 默认导出 ---------------------------- */
+
+const GameEngine = {
+  SUP,
+  MINUS,
+  CDOT,
+  TIMES,
+  FAMILIES,
+  LEVELS,
+  BOARD,
+  makeRng,
+  hashSeed,
+  letterPart,
+  coefText,
+  renderTerm,
+  renderSignedTerm,
+  renderExpanded,
+  joinTerms,
+  equationText,
+  answerText,
+  tileCount,
+  makeRound,
+  makeLevel,
+  createRound,
+  solveVerified,
+  isSolutionValid,
+  starsFor,
+  boardTiles,
+  accessibleTiles,
+  isAccessible,
+  railCounts,
+  railPush,
+  simulateRail,
+  applyMove,
+  solveRound,
+  greedyPlay,
+  isRoundClear,
+  railAfter,
+  findHint,
+};
+
+
+if (typeof window !== 'undefined') window.GameEngine = GameEngine;
+
+})();
+</script>
+<script>
+/* ===== game.js：界面与交互 ===== */
+window.__LT_SRC__ = window.__LT_SRC__ || {};
+window.__LT_SRC__["game.js"] = "/*!\n * 同类项·三消 —— 界面与交互\n * 依赖 engine.js 暴露的 window.GameEngine\n *\n * 玩法：桌面上堆着代数式卡片，点一张牌放进下面的 7 个卡槽；\n *       卡槽里凑满 3 张「同类项」就会自动合并 —— 合并的依据只有一条：\n *       所含字母相同，并且相同字母的指数也相同。\n */\n(function () {\n  'use strict';\n\n  const E = window.GameEngine;\n  const MINUS = E.MINUS;\n  const $ = (sel, root) => (root || document).querySelector(sel);\n  const $$ = (sel, root) => Array.prototype.slice.call((root || document).querySelectorAll(sel));\n\n  const RAIL_SLOTS = 7;\n\n  /** 动画/延时统一走这里：自动化测试时把延时压成 0，但保持「异步」时序不变 */\n  const timing = {\n    now: (fn, ms) => setTimeout(fn, window.__LT_INSTANT__ ? 0 : ms),\n  };\n  const later = (fn, ms) => timing.now(fn, ms);\n\n  /* ------------------------------------------------------------------ *\n   * 音效：WebAudio 现场合成，不依赖任何音频文件\n   * ------------------------------------------------------------------ */\n  const Sound = {\n    ctx: null,\n    muted: false,\n    init() {\n      if (this.ctx) return;\n      const AC = window.AudioContext || window.webkitAudioContext;\n      if (!AC) return;\n      try {\n        this.ctx = new AC();\n      } catch (err) {\n        this.ctx = null;\n      }\n    },\n    blip(freq, dur, type, gain) {\n      if (this.muted || !this.ctx) return;\n      try {\n        const t = this.ctx.currentTime;\n        const osc = this.ctx.createOscillator();\n        const g = this.ctx.createGain();\n        osc.type = type || 'sine';\n        osc.frequency.value = freq;\n        g.gain.setValueAtTime(0.0001, t);\n        g.gain.exponentialRampToValueAtTime(gain || 0.09, t + 0.012);\n        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);\n        osc.connect(g);\n        g.connect(this.ctx.destination);\n        osc.start(t);\n        osc.stop(t + dur + 0.02);\n      } catch (err) {\n        /* 忽略音频异常，绝不能影响游戏 */\n      }\n    },\n    tap() {\n      this.init();\n      this.blip(560, 0.09, 'sine', 0.05);\n    },\n    match() {\n      this.init();\n      [523.25, 659.25, 783.99].forEach((f, i) => setTimeout(() => this.blip(f, 0.22, 'sine', 0.07), i * 90));\n    },\n    win() {\n      this.init();\n      [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((f, i) =>\n        setTimeout(() => this.blip(f, 0.32, 'triangle', 0.075), i * 120)\n      );\n    },\n    bad() {\n      this.init();\n      this.blip(180, 0.22, 'sawtooth', 0.05);\n    },\n  };\n\n  /* ------------------------------------------------------------------ *\n   * 状态\n   * ------------------------------------------------------------------ */\n  const Game = {\n    levelId: 1,\n    solution: null, // 求解器给出的走法序列缓存（提示用）\n    answerRevealed: false, // 答案是否已揭晓\n    meta: null, // 关卡配置\n    round: null,\n    history: [],\n    seconds: 0,\n    timer: null,\n    hints: 0,\n    status: 'idle', // idle | playing | busy | won | dead\n    lastHint: null,\n    journal: [],\n    progress: {}, // levelId -> {stars, best}\n    unlocked: 1,\n  };\n\n  function levelConfig(id) {\n    return E.LEVELS.filter((l) => l.id === id)[0];\n  }\n\n  /* ------------------------------------------------------------------ *\n   * 渲染：卡面\n   * ------------------------------------------------------------------ */\n  function svgSymbol(icon) {\n    const stroke = 'var(--tile-ink)';\n    if (icon === 'triangle') {\n      return (\n        '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"' + stroke + '\" stroke-width=\"2.1\" stroke-linejoin=\"round\">' +\n        '<path d=\"M12 4.2 L20.4 18.6 H3.6 Z\"/></svg>'\n      );\n    }\n    if (icon === 'square') {\n      return (\n        '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"' + stroke + '\" stroke-width=\"2.1\" stroke-linejoin=\"round\">' +\n        '<rect x=\"4.4\" y=\"4.4\" width=\"15.2\" height=\"15.2\" rx=\"2.4\"/></svg>'\n      );\n    }\n    if (icon === 'diamond') {\n      return (\n        '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"' + stroke + '\" stroke-width=\"2.1\" stroke-linejoin=\"round\">' +\n        '<path d=\"M12 3.4 L20.6 12 L12 20.6 L3.4 12 Z\"/></svg>'\n      );\n    }\n    return (\n      '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"' + stroke + '\" stroke-width=\"2.1\">' +\n      '<circle cx=\"12\" cy=\"12\" r=\"8.1\"/></svg>'\n    );\n  }\n\n  const SUB = { '0': '\\u2080', '1': '\\u2081', '2': '\\u2082', '3': '\\u2083', '4': '\\u2084', '5': '\\u2085', '6': '\\u2086', '7': '\\u2087', '8': '\\u2088', '9': '\\u2089', '-': '\\u208B' };\n  const sub = (n) => String(n).split('').map((c) => SUB[c] || c).join('');\n\n  /**\n   * 卡面文字：把「系数 + 字母」写成一个完整的项（如 6x、−2x²），\n   * 并在系数下面标一个斜体 a，明确告诉学生那个数字是系数。\n   * 常数项没有字母，就只写数字。\n   */\n  function tileMarkup(tile) {\n    const fam = E.FAMILIES[tile.familyId];\n    const letters = E.letterPart(tile.powers);\n    const neg = tile.coef < 0;\n    const isConst = letters === '';\n    // 书写规范：系数是 1 时不写出来（x² 而不是 1x²），常数项则必须写出数字\n    const abs = Math.abs(tile.coef);\n    const showNumber = isConst || abs !== 1;\n    const coefHTML =\n      '<span class=\"coef\">' +\n      (showNumber ? (neg ? MINUS : '') + E.coefText(abs) : neg ? MINUS : '') +\n      (isConst ? '' : '<span class=\"coef-mark\">a</span>') +\n      '</span>';\n    const lettersHTML = isConst ? '' : '<span class=\"letters\">' + letters + '</span>';\n    return (\n      '<span class=\"tile-deco\">' + svgSymbol(fam.icon) + '</span>' +\n      '<span class=\"term' + (isConst ? ' is-const' : '') + '\">' + coefHTML + lettersHTML + '</span>' +\n      '<span class=\"tile-stripe\" data-accent=\"' + fam.accent + '\"></span>'\n    );\n  }\n\n  function buildBoard() {\n    const board = $('#board');\n    board.innerHTML = '';\n    const frag = document.createDocumentFragment();\n    const ordered = Game.round.tiles.slice().sort((a, b) => a.layer - b.layer || a.y - b.y);\n    ordered.forEach((t, i) => {\n      const el = document.createElement('button');\n      el.className = 'tile';\n      el.type = 'button';\n      el.dataset.id = t.id;\n      el.innerHTML = tileMarkup(t);\n      el.setAttribute('style', '--x:' + t.x + 'px;--y:' + t.y + 'px;--tilt:' + t.tilt + 'deg');\n      el.style.animationDelay = Math.min(520, i * 22) + 'ms';\n      el.setAttribute('aria-label', '卡片 ' + E.renderTerm(t.coef, t.powers) + '，' + E.FAMILIES[t.familyId].label);\n      t.el = el;\n      frag.appendChild(el);\n    });\n    board.appendChild(frag);\n    refreshBoard();\n  }\n\n  /** 更新每张牌的层级、可点状态 */\n  function refreshBoard() {\n    // 注意：这里绝对不能再写 board.innerHTML = board.innerHTML。\n    // 那行看似无害的「noop」，在真实浏览器里会把整个棋盘重建一遍，\n    // 于是 t.el 指向的都是已经被丢弃的旧节点 —— 所有 class 都加在看不见的元素上，\n    // 表现就是「点了牌没消失、也分不清哪张被压住」。假 DOM 测试发现不了它。\n    Game.round.tiles.forEach((t) => {\n      if (!t.el) return;\n      if (t.place === 'board') {\n        t.el.style.display = '';\n        t.el.style.zIndex = String(10 + t.layer * 40 + Math.round(t.y / 10));\n        const open = E.isAccessible(Game.round, t);\n        t.el.classList.toggle('is-locked', !open);\n        t.el.classList.toggle('is-open', open);\n        t.el.disabled = !open || Game.status !== 'playing';\n      } else {\n        t.el.style.display = 'none';\n      }\n    });\n    $('#open-count').textContent = String(E.accessibleTiles(Game.round).length);\n    $('#board-count').textContent = String(E.boardTiles(Game.round).length);\n  }\n\n  /* ------------------------------------------------------------------ *\n   * 渲染：卡槽（7 个停车位）\n   * ------------------------------------------------------------------ */\n  function buildRail() {\n    const rail = $('#rail');\n    rail.innerHTML = '';\n    for (let i = 0; i < RAIL_SLOTS; i++) {\n      const cell = document.createElement('div');\n      cell.className = 'slot';\n      cell.dataset.slot = String(i);\n      cell.innerHTML = '<span class=\"slot-idx\">' + sub(i + 1) + '</span>';\n      rail.appendChild(cell);\n    }\n  }\n\n  function renderRail() {\n    const rail = $('#rail');\n    const cells = $$('.slot', rail);\n    const tiles = Game.round.rail;\n    cells.forEach((cell, i) => {\n      const t = tiles[i];\n      cell.classList.toggle('is-filled', !!t);\n      cell.classList.toggle('is-next', i === tiles.length);\n      const old = $('.mini', cell);\n      if (old) old.remove();\n      if (t) {\n        const mini = document.createElement('div');\n        mini.className = 'mini';\n        mini.dataset.id = t.id;\n        mini.style.animationDelay = (i * 20) + 'ms';\n        mini.innerHTML = tileMarkup(t);\n        t.slotEl = mini;\n        cell.appendChild(mini);\n      }\n    });\n    $('#rail-count').textContent = String(tiles.length);\n    $('#rail-max').textContent = String(Game.round.railMax);\n    const pressure = tiles.length / Game.round.railMax;\n    $('#railbar').style.setProperty('--p', String(Math.round(pressure * 100)));\n    $('#railbar').classList.toggle('is-warn', pressure >= 0.7);\n  }\n\n  /* ------------------------------------------------------------------ *\n   * 渲染：右侧面板\n   * ------------------------------------------------------------------ */\n  function renderPanel() {\n    $('#lv-name').textContent = '第 ' + Game.meta.id + ' 关';\n    $('#lv-title').textContent = Game.meta.name;\n    $('#lv-brief').textContent = Game.meta.brief;\n    // 进度\n    const total = Game.round.tiles.length / 3;\n    const done = Game.journal.length;\n    $('#prog-text').textContent = done + ' / ' + total + ' 组';\n    $('#prog-bar').style.width = Math.round((done / total) * 100) + '%';\n    // 同类项图例\n    const legend = $('#legend');\n    legend.innerHTML = Game.round.families\n      .map((f) => {\n        const sample = E.renderTerm(1, f.powers);\n        return (\n          '<li class=\"legend-item\" data-accent=\"' + f.accent + '\">' +\n          '<span class=\"legend-key\">' + sub(1) + '</span>' +\n          '<span class=\"legend-sample\">' + sample + '</span>' +\n          '<span class=\"legend-label\">' + f.label + '</span>' +\n          '</li>'\n        );\n      })\n      .join('');\n    // 合并过程\n    const list = $('#journal');\n    if (!Game.journal.length) {\n      list.innerHTML = '<li class=\"journal-empty\">凑满 3 张同类项，这里会记下合并过程</li>';\n    } else {\n      list.innerHTML = Game.journal\n        .map(\n          (j, i) =>\n            '<li class=\"journal-item\" data-accent=\"' + j.accent + '\" style=\"animation-delay:' +\n            Math.min(6, i) * 30 + 'ms\"><span class=\"jn\">' + sub(i + 1) + '</span>' + j.text + '</li>'\n        )\n        .join('');\n      list.scrollTop = list.scrollHeight;\n    }\n    // 答案（默认遮住，学生先自己算；点一下才揭晓）\n    $('#answer').textContent = Game.round.answer;\n    $('#answer-card').classList.toggle('is-revealed', Game.answerRevealed);\n    $('#answer-hint').textContent = Game.answerRevealed ? '自己先算一遍，再对照看看' : '点这里揭晓答案';\n    renderStars();\n    // 温度条\n    $('#timer').textContent = fmtTime(Game.seconds);\n    $('#hint-count').textContent = Game.hints > 0 ? String(Game.hints) : '';\n  }\n\n  function renderStars() {\n    const cfg = Game.meta;\n    const stars = cfg ? E.starsFor(cfg, Game.seconds, Game.hints) : 0;\n    const wrap = $('#lv-stars');\n    wrap.innerHTML = '';\n    for (let i = 0; i < 3; i++) {\n      const s = document.createElement('span');\n      s.className = 'star' + (i < stars ? ' is-on' : '');\n      s.textContent = '\\u2605';\n      wrap.appendChild(s);\n    }\n  }\n\n  function fmtTime(sec) {\n    const m = Math.floor(sec / 60);\n    const s = sec % 60;\n    return m + ':' + (s < 10 ? '0' : '') + s;\n  }\n\n  /* ------------------------------------------------------------------ *\n   * 顶部信息\n   * ------------------------------------------------------------------ */\n  function toast(msg, kind) {\n    const box = $('#toast');\n    box.textContent = msg;\n    box.className = 'toast' + (kind ? ' is-' + kind : '');\n    box.classList.add('is-show');\n    clearTimeout(toast._t);\n    toast._t = setTimeout(() => box.classList.remove('is-show'), 2600);\n  }\n\n  /* ------------------------------------------------------------------ *\n   * 核心交互\n   * ------------------------------------------------------------------ */\n  function startLevel(id, seed) {\n    const cfg = levelConfig(id);\n    Game.levelId = id;\n    Game.meta = cfg;\n    const realSeed = seed == null ? (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0 : seed >>> 0;\n    $('#seed').textContent = '#' + (realSeed % 100000);\n    Game.round = E.makeLevel(id, realSeed);\n    Game.round.tiles.forEach((t) => {\n      t.place = 'board';\n    });\n    Game.history = [];\n    Game.journal = [];\n    Game.solution = null;\n    Game.hints = 0;\n    Game.answerRevealed = false;\n    Game.seconds = 0;\n    Game.status = 'playing';\n    Game.lastHint = null;\n    $('#board').innerHTML = '';\n    buildBoard();\n    buildRail();\n    renderRail();\n    renderPanel();\n    $$('.tile').forEach((el) => el.classList.remove('is-hint'));\n    $('#level-chips').innerHTML = E.LEVELS.map((l) => {\n      const st = Game.progress[l.id];\n      const cls = l.id === id ? ' is-current' : l.id > Game.unlocked ? ' is-locked' : '';\n      return (\n        '<button type=\"button\" class=\"chip' + cls + '\" data-lv=\"' + l.id + '\"' + (l.id > Game.unlocked ? ' disabled' : '') + '>' +\n        l.id + (st ? '<em>' + '\\u2605'.repeat(st.stars) + '</em>' : '') +\n        '</button>'\n      );\n    }).join('');\n    startTimer();\n    setStatusLine('点击没有被压住的卡片，凑满 3 张同类项');\n  }\n\n  function setStatusLine(text) {\n    $('#statusline').textContent = text;\n  }\n\n  function startTimer() {\n    clearInterval(Game.timer);\n    Game.timer = setInterval(() => {\n      if (Game.status === 'playing') {\n        Game.seconds++;\n        $('#timer').textContent = fmtTime(Game.seconds);\n        if (Game.seconds % 5 === 0) renderStars();\n      }\n    }, 1000);\n  }\n\n  /**\n   * 点一张牌 → 放进卡槽（FLIP 动画）\n   */\n  function drawTile(tile) {\n    if (Game.status !== 'playing') return;\n    if (tile.place !== 'board' || !E.isAccessible(Game.round, tile)) {\n      shake(tile.el);\n      Sound.bad();\n      toast('这张牌被上面的卡片压住了，先清掉上面的', 'warn');\n      return;\n    }\n    if (Game.round.rail.length >= Game.round.railMax) {\n      Sound.bad();\n      shake($('#rail'));\n      toast('卡槽满了：先点「撤销」退回一张，或者换个能合并的牌', 'warn');\n      setStatusLine('卡槽已满 —— 点「撤销」退回一张牌');\n      return;\n    }\n\n    // 记录用于撤销。\n    // 注意：这里不清 Game.solution —— 解法缓存由 findHint 自己校验/前移，\n    // 保留它才能让「提示」沿着同一条可行路线一路走到底。\n    Game.history.push({ id: tile.id, place: tile.place });\n\n    const from = tile.el.getBoundingClientRect();\n    const wasRailSlot = Game.round.rail.length;\n\n    // 数据层：落轨\n    const cleared = E.applyMove(Game.round, [tile]);\n    Sound.tap();\n\n    // 视图层：FLIP\n    tile.el.style.display = 'none';\n    renderRail();\n    renderPanel();\n    refreshBoard();\n\n    const cells = $$('.slot', $('#rail'));\n    const target = cleared.length ? cells[Math.max(0, wasRailSlot - 1)] : cells[wasRailSlot] || cells[cells.length - 1];\n    const mini = target ? $('.mini', target) : null;\n    if (mini) {\n      const to = mini.getBoundingClientRect();\n      const dx = from.left - to.left;\n      const dy = from.top - to.top;\n      const scale = from.width / Math.max(1, to.width);\n      mini.style.transition = 'none';\n      mini.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(' + scale + ') rotate(' + tile.tilt + 'deg)';\n      mini.style.zIndex = '60';\n      void mini.offsetWidth;\n      mini.style.transition = 'transform 260ms cubic-bezier(.22,.9,.28,1.04)';\n      mini.style.transform = '';\n      later(() => {\n        mini.style.zIndex = '';\n      }, 300);\n    }\n\n    if (cleared.length) {\n      handleClear(cleared);\n    } else {\n      const left = Game.round.railMax - Game.round.rail.length;\n      if (left <= 0) {\n        setStatusLine('卡槽已满 —— 点「撤销」退回一张牌');\n      } else if (left <= 2) {\n        setStatusLine('小心：卡槽只剩 ' + left + ' 个位置');\n      } else {\n        setStatusLine('卡槽 ' + Game.round.rail.length + '/' + Game.round.railMax);\n      }\n      if (gameStuck()) onDead();\n    }\n  }\n\n  /** 三张同类项消掉 → 出算式卡 */\n  function handleClear(cleared) {\n    Game.status = 'busy';\n    Sound.match();\n    const fam = E.FAMILIES[cleared[0].familyId];\n    const eq = E.equationText(cleared);\n    const sum = cleared.reduce((s, t) => s + t.coef, 0);\n    const why =\n      fam.powers && Object.keys(fam.powers).length\n        ? '它们都是「' + E.renderExpanded(1, fam.powers).replace('1\\u00D7', '') + '」这一类，字母和指数完全相同，所以只把系数相加'\n        : '它们都是常数项（不含字母），直接把数字相加';\n\n    // 三张牌飞到一起 → 变成一个结果\n    const minis = cleared.map((t) => t.slotEl).filter(Boolean);\n    const railRect = $('#rail').getBoundingClientRect();\n    const cx = railRect.width / 2;\n    minis.forEach((m) => {\n      const r = m.getBoundingClientRect();\n      const dx = cx - (r.left - railRect.left + r.width / 2);\n      m.style.transition = 'transform 220ms cubic-bezier(.4,0,.6,1), opacity 220ms ease';\n      m.style.transform = 'translateX(' + dx + 'px) scale(.72)';\n      m.style.opacity = '0.15';\n    });\n\n    showEquation(eq, why, fam.accent);\n\n    const roundRef = Game.round;\n    later(() => {\n      if (Game.round !== roundRef) return; // 动画期间重开了本关，丢弃这次结算\n      Game.journal.push({ text: eq, accent: fam.accent });\n      // 注意：这里不能清空 Game.solution。求解器给出的方案在消除之后依然有效；\n      // 清掉它会让提示被迫从当前中间局面重新求解，而那个局面本身可能已经无解\n      // （实测第 6 关就是这么丢掉最后两张 x 的）。缓存由 findHint 自己校验。\n      renderRail();\n      renderPanel();\n      const boardLeft = E.boardTiles(Game.round).length;\n      if (E.isRoundClear(Game.round)) {\n        onWin();\n      } else if (!boardLeft && Game.round.rail.length === 3) {\n        // 桌面已经没有牌了，卡槽里正好剩同类三张 —— 让收尾规则把它合掉\n        const rest = Game.round.rail.slice();\n        const done = [];\n        for (const t of rest) {\n          t.place = 'rail';\n          for (const c of E.railPush(Game.round.rail, t)) done.push(c);\n        }\n        for (const t of done) t.place = 'gone';\n        Game.round.rail = Game.round.rail.filter((t) => t.place === 'rail');\n        if (done.length) {\n          Game.journal.push({ text: E.equationText(done), accent: E.FAMILIES[done[0].familyId].accent });\n          Game.solution = null;\n          renderRail();\n          renderPanel();\n        }\n        onWin();\n      } else if (!boardLeft) {\n        // 桌面清空但卡槽里剩下的是异族散牌：这一局没打完，引导重开\n        onDead();\n      } else {\n        Game.status = 'playing';\n        refreshBoard();\n        if (gameStuck()) onDead();\n      }\n    }, 620);\n  }\n\n  function showEquation(eq, why, accent) {\n    const card = $('#eqcard');\n    card.dataset.accent = accent;\n    $('#eq-formula').textContent = eq;\n    $('#eq-why').textContent = why;\n    card.classList.remove('is-show');\n    void card.offsetWidth;\n    card.classList.add('is-show');\n    clearTimeout(showEquation._t);\n    showEquation._t = later(() => card.classList.remove('is-show'), 3000);\n  }\n\n  function shake(el) {\n    if (!el) return;\n    el.classList.remove('is-shake');\n    void el.offsetWidth;\n    el.classList.add('is-shake');\n    later(() => el.classList.remove('is-shake'), 420);\n  }\n\n  /* ------------------------------------------------------------------ *\n   * 道具：撤销 / 提示\n   * ------------------------------------------------------------------ */\n  function undo() {\n    if (Game.status !== 'playing' || !Game.history.length) {\n      toast('没有可以撤销的操作', 'warn');\n      return;\n    }\n    const last = Game.history.pop();\n    const tile = Game.round.tiles.filter((t) => t.id === last.id)[0];\n    // 把这张牌从卡槽收回桌面\n    Game.solution = null;\n    const i = Game.round.rail.indexOf(tile);\n    if (i >= 0) Game.round.rail.splice(i, 1);\n    tile.place = 'board';\n    Game.round.rail.forEach((t, k) => (t.railIndex = k));\n    Sound.tap();\n    renderRail();\n    refreshBoard();\n    renderPanel();\n    setStatusLine('撤销成功，再想想放哪张');\n    $$('.tile').forEach((el) => el.classList.remove('is-hint'));\n    hideGhosts();\n  }\n\n  function hint() {\n    if (Game.status !== 'playing') return;\n    const h = E.findHint(Game.round, Game.solution);\n    if (h && h.solution) Game.solution = h.solution;\n    if (!h) {\n      Sound.bad();\n      toast('暂时没有能凑的同类项，先用「撤销」腾出卡槽', 'warn');\n      return;\n    }\n    Game.hints++;\n    Sound.tap();\n    $$('.tile').forEach((el) => el.classList.remove('is-hint'));\n    hideGhosts();\n    const fam = E.FAMILIES[h.familyId];\n    h.tiles.forEach((t) => {\n      if (t.el) t.el.classList.add('is-hint');\n    });\n    Game.round.rail.forEach((t) => {\n      if (t.slotEl && t.familyId === h.familyId) t.slotEl.classList.add('is-hint');\n    });\n    const need = 3 - h.fromRail;\n    const railText = h.fromRail ? '卡槽里已经有 ' + h.fromRail + ' 张，' : '';\n    const part = E.letterPart(fam.powers) || '常数项';\n    if (h.kind === 'triple' && h.fromRail === 0 && h.tiles.length > 1) {\n      setStatusLine('提示：把桌上这三张「' + part + '」依次点进卡槽，它们就能合并');\n    } else if (h.kind === 'solver') {\n      setStatusLine('提示：这一步先放「' + h.tiles.map((t) => E.renderTerm(t.coef, t.powers)).join(' + ') + '」，卡槽就不会被堵住');\n    } else if (h.kind === 'single' || h.kind === 'pair') {\n      setStatusLine('提示：先把这张「' + E.renderTerm(h.tiles[0].coef, h.tiles[0].powers) + '」放进卡槽，它属于「' + part + '」');\n    } else {\n      setStatusLine('提示：' + railText + '再找出 ' + need + ' 张「' + part + '」放进去');\n    }\n    // 在空卡槽里显示目标虚影（只有明确要凑三张时才显示）\n    if (h.kind === 'finish' || h.kind === 'triple' || h.kind === 'solver') showGhosts(h.tiles.length, fam);\n    renderPanel();\n    later(() => {\n      $$('.tile').forEach((el) => el.classList.remove('is-hint'));\n      hideGhosts();\n    }, 4200);\n  }\n\n  function showGhosts(need, fam) {\n    const cells = $$('.slot', $('#rail'));\n    let placed = 0;\n    for (let i = Game.round.rail.length; i < cells.length && placed < need; i++, placed++) {\n      const g = document.createElement('div');\n      g.className = 'ghost';\n      g.dataset.accent = fam.accent;\n      // 常数项没有字母部分，就显示一个点，避免把「常数项」三个字硬塞进小方格\n      const ghostText = E.letterPart(fam.powers) || '·';\n      g.innerHTML = '<span class=\"ghost-letters\">' + ghostText + '</span>';\n      cells[i].appendChild(g);\n    }\n  }\n\n  function hideGhosts() {\n    $$('.ghost').forEach((g) => g.remove());\n  }\n\n  /* ------------------------------------------------------------------ *\n   * 判负（卡槽满且走不动）/ 通关\n   * ------------------------------------------------------------------ */\n  function gameStuck() {\n    if (!E.boardTiles(Game.round).length) return false;\n    // 还有牌可以点 → 就还没死，最多是卡槽要满了\n    return E.accessibleTiles(Game.round).length === 0;\n  }\n\n  function onDead() {\n    Game.status = 'dead';\n    Sound.bad();\n    $('#overlay-kind').textContent = '卡槽满了';\n    $('#overlay-title').textContent = '先把牌退回来';\n    $('#overlay-sub').textContent =\n      '卡槽里的牌不是同类项，暂时合并不了。点「撤销」把最后一张放回桌面，换个顺序试试。';\n    $('#overlay-answer').textContent = '';\n    showOverlay({\n      primary: { label: '撤销一张', action: () => { hideOverlay(); undo(); } },\n      ghost: { label: '重开本关', action: () => { hideOverlay(); startLevel(Game.levelId); } },\n    });\n  }\n\n  function onWin() {\n    Game.status = 'won';\n    clearInterval(Game.timer);\n    clearInterval(Game.timer);\n    Sound.win();\n    const cfg = Game.meta;\n    const stars = E.starsFor(cfg, Game.seconds, Game.hints);\n    const prev = Game.progress[cfg.id];\n    Game.progress[cfg.id] = {\n      stars: prev ? Math.max(prev.stars, stars) : stars,\n      best: prev && prev.best ? Math.min(prev.best, Game.seconds) : Game.seconds,\n    };\n    Game.unlocked = Math.max(Game.unlocked, Math.min(E.LEVELS.length, cfg.id + 1));\n    saveProgress();\n    $('#overlay-kind').textContent = '合并完成';\n    $('#overlay-title').textContent = cfg.name + ' \\u2713';\n    $('#overlay-sub').textContent =\n      '用时 ' + fmtTime(Game.seconds) + '，用了 ' + Game.hints + ' 次提示。最终答案：';\n    $('#overlay-answer').innerHTML =\n      '<span class=\"ans\">' + Game.round.answer + '</span>' +\n      '<span class=\"ans-note\">' + E.LEVELS[Game.levelId - 1].brief + '</span>';\n    const nextId = cfg.id < E.LEVELS.length ? cfg.id + 1 : null;\n    showOverlay({\n      primary: nextId\n        ? { label: '下一关 ' + nextId, action: () => { hideOverlay(); startLevel(nextId); } }\n        : { label: '再玩一次', action: () => { hideOverlay(); startLevel(1); } },\n      ghost: { label: '重玩本关', action: () => { hideOverlay(); startLevel(cfg.id); } },\n    });\n  }\n\n  /* ------------------------------------------------------------------ *\n   * 弹层 & 帮助\n   * ------------------------------------------------------------------ */\n  function showOverlay(opts) {\n    const ov = $('#overlay');\n    ov.classList.add('is-show');\n    const p = $('#overlay-primary');\n    const g = $('#overlay-ghost');\n    p.textContent = opts.primary.label;\n    p.onclick = opts.primary.action;\n    g.textContent = opts.ghost.label;\n    g.onclick = opts.ghost.action;\n    renderStarsTo($('#overlay-stars'), E.starsFor(Game.meta, Game.seconds, Game.hints));\n  }\n\n  function hideOverlay() {\n    $('#overlay').classList.remove('is-show');\n  }\n\n  function renderStarsTo(el, stars) {\n    el.innerHTML = '';\n    for (let i = 0; i < 3; i++) {\n      const s = document.createElement('span');\n      s.className = 'star big' + (i < stars ? ' is-on' : '');\n      s.textContent = '\\u2605';\n      el.appendChild(s);\n    }\n  }\n\n  function toggleHelp(force) {\n    const panel = $('#help');\n    const show = force == null ? !panel.classList.contains('is-show') : force;\n    panel.classList.toggle('is-show', show);\n  }\n\n  /**\n   * 真正开始这一局。\n   * 首屏只是「先读规则」的待机状态，无论学生点「开始合并」还是「先看看牌桌」，\n   * 只要规则面板关掉了，就必须把游戏激活 —— 否则牌桌是死的，\n   * 学生只能反复打开规则面板，进退两难。\n   */\n  function beginPlay() {\n    if (Game.status === 'idle') {\n      Game.status = 'playing';\n      Game.seconds = 0;\n      $('#timer').textContent = fmtTime(0);\n      refreshBoard();\n    }\n  }\n\n  /* ------------------------------------------------------------------ *\n   * 存档\n   * ------------------------------------------------------------------ */\n  function saveProgress() {\n    try {\n      window.localStorage.setItem(\n        'like-terms-progress',\n        JSON.stringify({ progress: Game.progress, unlocked: Game.unlocked })\n      );\n    } catch (err) {\n      /* 隐私模式下 localStorage 可能不可用 */\n    }\n  }\n\n  function loadProgress() {\n    try {\n      const raw = window.localStorage.getItem('like-terms-progress');\n      if (!raw) return;\n      const data = JSON.parse(raw);\n      if (data && data.progress) Game.progress = data.progress;\n      if (data && data.unlocked) Game.unlocked = data.unlocked;\n    } catch (err) {\n      /* 忽略损坏的存档 */\n    }\n  }\n\n  /* ------------------------------------------------------------------ *\n   * 事件绑定\n   * ------------------------------------------------------------------ */\n  function bind() {\n    $('#board').addEventListener('click', (ev) => {\n      const el = ev.target.closest('.tile');\n      if (!el) return;\n      const tile = Game.round.tiles.filter((t) => t.id === el.dataset.id)[0];\n      if (tile) drawTile(tile);\n    });\n\n    $('#answer-card').addEventListener('click', () => {\n      Game.answerRevealed = !Game.answerRevealed;\n      Sound.tap();\n      renderPanel();\n    });\n\n    $('#btn-undo').addEventListener('click', undo);\n    $('#btn-hint').addEventListener('click', hint);\n    $('#btn-restart').addEventListener('click', () => startLevel(Game.levelId));\n    $('#btn-help').addEventListener('click', () => toggleHelp());\n    // 点击规则面板的灰色背景也能关掉，避免学生「关不掉」\n    $('#help').addEventListener('click', (ev) => {\n      if (ev.target && ev.target.id === 'help') {\n        toggleHelp(false);\n        beginPlay();\n      }\n    });\n    // 两个按钮都只是「关掉规则面板」，关掉即开始，不存在只关不开始的情况\n    $('#help-close').addEventListener('click', () => {\n      toggleHelp(false);\n      beginPlay();\n    });\n    $('#help-start').addEventListener('click', () => {\n      toggleHelp(false);\n      beginPlay();\n    });\n\n    $('#btn-sound').addEventListener('click', (ev) => {\n      Sound.muted = !Sound.muted;\n      ev.currentTarget.classList.toggle('is-muted', Sound.muted);\n      ev.currentTarget.setAttribute('aria-pressed', String(!Sound.muted));\n      if (!Sound.muted) {\n        Sound.init();\n        Sound.tap();\n      }\n    });\n\n    $('#level-chips').addEventListener('click', (ev) => {\n      const chip = ev.target.closest('.chip');\n      if (!chip || chip.disabled) return;\n      startLevel(Number(chip.dataset.lv));\n    });\n\n    document.addEventListener('keydown', (ev) => {\n      if (ev.key === 'Escape') {\n        hideOverlay();\n        toggleHelp(false);\n      }\n      if (ev.key === 'u' || ev.key === 'U') undo();\n      if (ev.key === 'h' || ev.key === 'H') hint();\n      if (ev.key === 'r' || ev.key === 'R') startLevel(Game.levelId);\n      if (ev.key === ' ') {\n        ev.preventDefault();\n        hint();\n      }\n    });\n\n    // 手机 / 平板：把整个舞台等比缩放\n    const fit = () => {\n      const stage = $('#stage');\n      const pad = 12;\n      const w = Math.min(window.innerWidth - pad * 2, 1180);\n      const h = Math.min(window.innerHeight - pad * 2, 760);\n      const scale = Math.min(1, w / 1180, h / 760);\n      stage.style.transform = 'scale(' + scale + ')';\n      document.body.style.setProperty('--vb-pad', Math.round((760 - 760 * scale) / 2) + 'px');\n    };\n    window.addEventListener('resize', fit);\n    fit();\n  }\n\n  /* ------------------------------------------------------------------ *\n   * 启动\n   * ------------------------------------------------------------------ */\n  function boot() {\n    if (!E) {\n      document.body.innerHTML =\n        '<p style=\"font:16px/1.6 sans-serif;padding:40px\">游戏引擎加载失败，请确认 engine.js 与本文件在同一目录。</p>';\n      return;\n    }\n    loadProgress();\n    bind();\n    startLevel(1, Date.now() & 0xffffff);\n    // 首屏先读规则：把状态置回待机，点「开始合并」才真正开始计时与可点\n    Game.status = 'idle';\n    refreshBoard();\n    toggleHelp(true);\n    clearInterval(Game.timer);\n    Game.timer = setInterval(() => {\n      if (Game.status === 'playing') {\n        Game.seconds++;\n        $('#timer').textContent = fmtTime(Game.seconds);\n        if (Game.seconds % 5 === 0) renderStars();\n      }\n    }, 1000);\n  }\n\n  if (document.readyState === 'loading') {\n    document.addEventListener('DOMContentLoaded', boot);\n  } else {\n    boot();\n  }\n\n  // 暴露给自动化测试\n  window.LikeTermsGame = { Game, startLevel, drawTile, hint, undo, gameStuck, onWin, onDead, refreshBoard };\n})();\n";
+(function () {
+/*!
+ * 同类项·三消 —— 界面与交互
+ * 依赖 engine.js 暴露的 window.GameEngine
+ *
+ * 玩法：桌面上堆着代数式卡片，点一张牌放进下面的 7 个卡槽；
+ *       卡槽里凑满 3 张「同类项」就会自动合并 —— 合并的依据只有一条：
+ *       所含字母相同，并且相同字母的指数也相同。
+ */
+(function () {
+  'use strict';
+
+  const E = window.GameEngine;
+  const MINUS = E.MINUS;
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  const $$ = (sel, root) => Array.prototype.slice.call((root || document).querySelectorAll(sel));
+
+  const RAIL_SLOTS = 7;
+
+  /** 动画/延时统一走这里：自动化测试时把延时压成 0，但保持「异步」时序不变 */
+  const timing = {
+    now: (fn, ms) => setTimeout(fn, window.__LT_INSTANT__ ? 0 : ms),
+  };
+  const later = (fn, ms) => timing.now(fn, ms);
+
+  /* ------------------------------------------------------------------ *
+   * 音效：WebAudio 现场合成，不依赖任何音频文件
+   * ------------------------------------------------------------------ */
+  const Sound = {
+    ctx: null,
+    muted: false,
+    init() {
+      if (this.ctx) return;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      try {
+        this.ctx = new AC();
+      } catch (err) {
+        this.ctx = null;
+      }
+    },
+    blip(freq, dur, type, gain) {
+      if (this.muted || !this.ctx) return;
+      try {
+        const t = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const g = this.ctx.createGain();
+        osc.type = type || 'sine';
+        osc.frequency.value = freq;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(gain || 0.09, t + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        osc.connect(g);
+        g.connect(this.ctx.destination);
+        osc.start(t);
+        osc.stop(t + dur + 0.02);
+      } catch (err) {
+        /* 忽略音频异常，绝不能影响游戏 */
+      }
+    },
+    tap() {
+      this.init();
+      this.blip(560, 0.09, 'sine', 0.05);
+    },
+    match() {
+      this.init();
+      [523.25, 659.25, 783.99].forEach((f, i) => setTimeout(() => this.blip(f, 0.22, 'sine', 0.07), i * 90));
+    },
+    win() {
+      this.init();
+      [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((f, i) =>
+        setTimeout(() => this.blip(f, 0.32, 'triangle', 0.075), i * 120)
+      );
+    },
+    bad() {
+      this.init();
+      this.blip(180, 0.22, 'sawtooth', 0.05);
+    },
+  };
+
+  /* ------------------------------------------------------------------ *
+   * 状态
+   * ------------------------------------------------------------------ */
+  const Game = {
+    levelId: 1,
+    solution: null, // 求解器给出的走法序列缓存（提示用）
+    answerRevealed: false, // 答案是否已揭晓
+    meta: null, // 关卡配置
+    round: null,
+    history: [],
+    seconds: 0,
+    timer: null,
+    hints: 0,
+    status: 'idle', // idle | playing | busy | won | dead
+    lastHint: null,
+    journal: [],
+    progress: {}, // levelId -> {stars, best}
+    unlocked: 1,
+  };
+
+  function levelConfig(id) {
+    return E.LEVELS.filter((l) => l.id === id)[0];
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 渲染：卡面
+   * ------------------------------------------------------------------ */
+  function svgSymbol(icon) {
+    const stroke = 'var(--tile-ink)';
+    if (icon === 'triangle') {
+      return (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="' + stroke + '" stroke-width="2.1" stroke-linejoin="round">' +
+        '<path d="M12 4.2 L20.4 18.6 H3.6 Z"/></svg>'
+      );
+    }
+    if (icon === 'square') {
+      return (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="' + stroke + '" stroke-width="2.1" stroke-linejoin="round">' +
+        '<rect x="4.4" y="4.4" width="15.2" height="15.2" rx="2.4"/></svg>'
+      );
+    }
+    if (icon === 'diamond') {
+      return (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="' + stroke + '" stroke-width="2.1" stroke-linejoin="round">' +
+        '<path d="M12 3.4 L20.6 12 L12 20.6 L3.4 12 Z"/></svg>'
+      );
+    }
+    return (
+      '<svg viewBox="0 0 24 24" fill="none" stroke="' + stroke + '" stroke-width="2.1">' +
+      '<circle cx="12" cy="12" r="8.1"/></svg>'
+    );
+  }
+
+  const SUB = { '0': '\u2080', '1': '\u2081', '2': '\u2082', '3': '\u2083', '4': '\u2084', '5': '\u2085', '6': '\u2086', '7': '\u2087', '8': '\u2088', '9': '\u2089', '-': '\u208B' };
+  const sub = (n) => String(n).split('').map((c) => SUB[c] || c).join('');
+
+  /**
+   * 卡面文字：把「系数 + 字母」写成一个完整的项（如 6x、−2x²），
+   * 并在系数下面标一个斜体 a，明确告诉学生那个数字是系数。
+   * 常数项没有字母，就只写数字。
+   */
+  function tileMarkup(tile) {
+    const fam = E.FAMILIES[tile.familyId];
+    const letters = E.letterPart(tile.powers);
+    const neg = tile.coef < 0;
+    const isConst = letters === '';
+    // 书写规范：系数是 1 时不写出来（x² 而不是 1x²），常数项则必须写出数字
+    const abs = Math.abs(tile.coef);
+    const showNumber = isConst || abs !== 1;
+    const coefHTML =
+      '<span class="coef">' +
+      (showNumber ? (neg ? MINUS : '') + E.coefText(abs) : neg ? MINUS : '') +
+      (isConst ? '' : '<span class="coef-mark">a</span>') +
+      '</span>';
+    const lettersHTML = isConst ? '' : '<span class="letters">' + letters + '</span>';
+    return (
+      '<span class="tile-deco">' + svgSymbol(fam.icon) + '</span>' +
+      '<span class="term' + (isConst ? ' is-const' : '') + '">' + coefHTML + lettersHTML + '</span>' +
+      '<span class="tile-stripe" data-accent="' + fam.accent + '"></span>'
+    );
+  }
+
+  function buildBoard() {
+    const board = $('#board');
+    board.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    const ordered = Game.round.tiles.slice().sort((a, b) => a.layer - b.layer || a.y - b.y);
+    ordered.forEach((t, i) => {
+      const el = document.createElement('button');
+      el.className = 'tile';
+      el.type = 'button';
+      el.dataset.id = t.id;
+      el.innerHTML = tileMarkup(t);
+      el.setAttribute('style', '--x:' + t.x + 'px;--y:' + t.y + 'px;--tilt:' + t.tilt + 'deg');
+      el.style.animationDelay = Math.min(520, i * 22) + 'ms';
+      el.setAttribute('aria-label', '卡片 ' + E.renderTerm(t.coef, t.powers) + '，' + E.FAMILIES[t.familyId].label);
+      t.el = el;
+      frag.appendChild(el);
+    });
+    board.appendChild(frag);
+    refreshBoard();
+  }
+
+  /** 更新每张牌的层级、可点状态 */
+  function refreshBoard() {
+    // 注意：这里绝对不能再写 board.innerHTML = board.innerHTML。
+    // 那行看似无害的「noop」，在真实浏览器里会把整个棋盘重建一遍，
+    // 于是 t.el 指向的都是已经被丢弃的旧节点 —— 所有 class 都加在看不见的元素上，
+    // 表现就是「点了牌没消失、也分不清哪张被压住」。假 DOM 测试发现不了它。
+    Game.round.tiles.forEach((t) => {
+      if (!t.el) return;
+      if (t.place === 'board') {
+        t.el.style.display = '';
+        t.el.style.zIndex = String(10 + t.layer * 40 + Math.round(t.y / 10));
+        const open = E.isAccessible(Game.round, t);
+        t.el.classList.toggle('is-locked', !open);
+        t.el.classList.toggle('is-open', open);
+        t.el.disabled = !open || Game.status !== 'playing';
+      } else {
+        t.el.style.display = 'none';
+      }
+    });
+    $('#open-count').textContent = String(E.accessibleTiles(Game.round).length);
+    $('#board-count').textContent = String(E.boardTiles(Game.round).length);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 渲染：卡槽（7 个停车位）
+   * ------------------------------------------------------------------ */
+  function buildRail() {
+    const rail = $('#rail');
+    rail.innerHTML = '';
+    for (let i = 0; i < RAIL_SLOTS; i++) {
+      const cell = document.createElement('div');
+      cell.className = 'slot';
+      cell.dataset.slot = String(i);
+      cell.innerHTML = '<span class="slot-idx">' + sub(i + 1) + '</span>';
+      rail.appendChild(cell);
+    }
+  }
+
+  function renderRail() {
+    const rail = $('#rail');
+    const cells = $$('.slot', rail);
+    const tiles = Game.round.rail;
+    cells.forEach((cell, i) => {
+      const t = tiles[i];
+      cell.classList.toggle('is-filled', !!t);
+      cell.classList.toggle('is-next', i === tiles.length);
+      const old = $('.mini', cell);
+      if (old) old.remove();
+      if (t) {
+        const mini = document.createElement('div');
+        mini.className = 'mini';
+        mini.dataset.id = t.id;
+        mini.style.animationDelay = (i * 20) + 'ms';
+        mini.innerHTML = tileMarkup(t);
+        t.slotEl = mini;
+        cell.appendChild(mini);
+      }
+    });
+    $('#rail-count').textContent = String(tiles.length);
+    $('#rail-max').textContent = String(Game.round.railMax);
+    const pressure = tiles.length / Game.round.railMax;
+    $('#railbar').style.setProperty('--p', String(Math.round(pressure * 100)));
+    $('#railbar').classList.toggle('is-warn', pressure >= 0.7);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 渲染：右侧面板
+   * ------------------------------------------------------------------ */
+  function renderPanel() {
+    $('#lv-name').textContent = '第 ' + Game.meta.id + ' 关';
+    $('#lv-title').textContent = Game.meta.name;
+    $('#lv-brief').textContent = Game.meta.brief;
+    // 进度
+    const total = Game.round.tiles.length / 3;
+    const done = Game.journal.length;
+    $('#prog-text').textContent = done + ' / ' + total + ' 组';
+    $('#prog-bar').style.width = Math.round((done / total) * 100) + '%';
+    // 同类项图例
+    const legend = $('#legend');
+    legend.innerHTML = Game.round.families
+      .map((f) => {
+        const sample = E.renderTerm(1, f.powers);
+        return (
+          '<li class="legend-item" data-accent="' + f.accent + '">' +
+          '<span class="legend-key">' + sub(1) + '</span>' +
+          '<span class="legend-sample">' + sample + '</span>' +
+          '<span class="legend-label">' + f.label + '</span>' +
+          '</li>'
+        );
+      })
+      .join('');
+    // 合并过程
+    const list = $('#journal');
+    if (!Game.journal.length) {
+      list.innerHTML = '<li class="journal-empty">凑满 3 张同类项，这里会记下合并过程</li>';
+    } else {
+      list.innerHTML = Game.journal
+        .map(
+          (j, i) =>
+            '<li class="journal-item" data-accent="' + j.accent + '" style="animation-delay:' +
+            Math.min(6, i) * 30 + 'ms"><span class="jn">' + sub(i + 1) + '</span>' + j.text + '</li>'
+        )
+        .join('');
+      list.scrollTop = list.scrollHeight;
+    }
+    // 答案（默认遮住，学生先自己算；点一下才揭晓）
+    $('#answer').textContent = Game.round.answer;
+    $('#answer-card').classList.toggle('is-revealed', Game.answerRevealed);
+    $('#answer-hint').textContent = Game.answerRevealed ? '自己先算一遍，再对照看看' : '点这里揭晓答案';
+    renderStars();
+    // 温度条
+    $('#timer').textContent = fmtTime(Game.seconds);
+    $('#hint-count').textContent = Game.hints > 0 ? String(Game.hints) : '';
+  }
+
+  function renderStars() {
+    const cfg = Game.meta;
+    const stars = cfg ? E.starsFor(cfg, Game.seconds, Game.hints) : 0;
+    const wrap = $('#lv-stars');
+    wrap.innerHTML = '';
+    for (let i = 0; i < 3; i++) {
+      const s = document.createElement('span');
+      s.className = 'star' + (i < stars ? ' is-on' : '');
+      s.textContent = '\u2605';
+      wrap.appendChild(s);
+    }
+  }
+
+  function fmtTime(sec) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 顶部信息
+   * ------------------------------------------------------------------ */
+  function toast(msg, kind) {
+    const box = $('#toast');
+    box.textContent = msg;
+    box.className = 'toast' + (kind ? ' is-' + kind : '');
+    box.classList.add('is-show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => box.classList.remove('is-show'), 2600);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 核心交互
+   * ------------------------------------------------------------------ */
+  function startLevel(id, seed) {
+    const cfg = levelConfig(id);
+    Game.levelId = id;
+    Game.meta = cfg;
+    const realSeed = seed == null ? (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0 : seed >>> 0;
+    $('#seed').textContent = '#' + (realSeed % 100000);
+    Game.round = E.makeLevel(id, realSeed);
+    Game.round.tiles.forEach((t) => {
+      t.place = 'board';
+    });
+    Game.history = [];
+    Game.journal = [];
+    Game.solution = null;
+    Game.hints = 0;
+    Game.answerRevealed = false;
+    Game.seconds = 0;
+    Game.status = 'playing';
+    Game.lastHint = null;
+    $('#board').innerHTML = '';
+    buildBoard();
+    buildRail();
+    renderRail();
+    renderPanel();
+    $$('.tile').forEach((el) => el.classList.remove('is-hint'));
+    $('#level-chips').innerHTML = E.LEVELS.map((l) => {
+      const st = Game.progress[l.id];
+      const cls = l.id === id ? ' is-current' : l.id > Game.unlocked ? ' is-locked' : '';
+      return (
+        '<button type="button" class="chip' + cls + '" data-lv="' + l.id + '"' + (l.id > Game.unlocked ? ' disabled' : '') + '>' +
+        l.id + (st ? '<em>' + '\u2605'.repeat(st.stars) + '</em>' : '') +
+        '</button>'
+      );
+    }).join('');
+    startTimer();
+    setStatusLine('点击没有被压住的卡片，凑满 3 张同类项');
+  }
+
+  function setStatusLine(text) {
+    $('#statusline').textContent = text;
+  }
+
+  function startTimer() {
+    clearInterval(Game.timer);
+    Game.timer = setInterval(() => {
+      if (Game.status === 'playing') {
+        Game.seconds++;
+        $('#timer').textContent = fmtTime(Game.seconds);
+        if (Game.seconds % 5 === 0) renderStars();
+      }
+    }, 1000);
+  }
+
+  /**
+   * 点一张牌 → 放进卡槽（FLIP 动画）
+   */
+  function drawTile(tile) {
+    if (Game.status !== 'playing') return;
+    if (tile.place !== 'board' || !E.isAccessible(Game.round, tile)) {
+      shake(tile.el);
+      Sound.bad();
+      toast('这张牌被上面的卡片压住了，先清掉上面的', 'warn');
+      return;
+    }
+    if (Game.round.rail.length >= Game.round.railMax) {
+      Sound.bad();
+      shake($('#rail'));
+      toast('卡槽满了：先点「撤销」退回一张，或者换个能合并的牌', 'warn');
+      setStatusLine('卡槽已满 —— 点「撤销」退回一张牌');
+      return;
+    }
+
+    // 记录用于撤销。
+    // 注意：这里不清 Game.solution —— 解法缓存由 findHint 自己校验/前移，
+    // 保留它才能让「提示」沿着同一条可行路线一路走到底。
+    Game.history.push({ id: tile.id, place: tile.place });
+
+    const from = tile.el.getBoundingClientRect();
+    const wasRailSlot = Game.round.rail.length;
+
+    // 数据层：落轨
+    const cleared = E.applyMove(Game.round, [tile]);
+    Sound.tap();
+
+    // 视图层：FLIP
+    tile.el.style.display = 'none';
+    renderRail();
+    renderPanel();
+    refreshBoard();
+
+    const cells = $$('.slot', $('#rail'));
+    const target = cleared.length ? cells[Math.max(0, wasRailSlot - 1)] : cells[wasRailSlot] || cells[cells.length - 1];
+    const mini = target ? $('.mini', target) : null;
+    if (mini) {
+      const to = mini.getBoundingClientRect();
+      const dx = from.left - to.left;
+      const dy = from.top - to.top;
+      const scale = from.width / Math.max(1, to.width);
+      mini.style.transition = 'none';
+      mini.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(' + scale + ') rotate(' + tile.tilt + 'deg)';
+      mini.style.zIndex = '60';
+      void mini.offsetWidth;
+      mini.style.transition = 'transform 260ms cubic-bezier(.22,.9,.28,1.04)';
+      mini.style.transform = '';
+      later(() => {
+        mini.style.zIndex = '';
+      }, 300);
+    }
+
+    if (cleared.length) {
+      handleClear(cleared);
+    } else {
+      const left = Game.round.railMax - Game.round.rail.length;
+      if (left <= 0) {
+        setStatusLine('卡槽已满 —— 点「撤销」退回一张牌');
+      } else if (left <= 2) {
+        setStatusLine('小心：卡槽只剩 ' + left + ' 个位置');
+      } else {
+        setStatusLine('卡槽 ' + Game.round.rail.length + '/' + Game.round.railMax);
+      }
+      if (gameStuck()) onDead();
+    }
+  }
+
+  /** 三张同类项消掉 → 出算式卡 */
+  function handleClear(cleared) {
+    Game.status = 'busy';
+    Sound.match();
+    const fam = E.FAMILIES[cleared[0].familyId];
+    const eq = E.equationText(cleared);
+    const sum = cleared.reduce((s, t) => s + t.coef, 0);
+    const why =
+      fam.powers && Object.keys(fam.powers).length
+        ? '它们都是「' + E.renderExpanded(1, fam.powers).replace('1\u00D7', '') + '」这一类，字母和指数完全相同，所以只把系数相加'
+        : '它们都是常数项（不含字母），直接把数字相加';
+
+    // 三张牌飞到一起 → 变成一个结果
+    const minis = cleared.map((t) => t.slotEl).filter(Boolean);
+    const railRect = $('#rail').getBoundingClientRect();
+    const cx = railRect.width / 2;
+    minis.forEach((m) => {
+      const r = m.getBoundingClientRect();
+      const dx = cx - (r.left - railRect.left + r.width / 2);
+      m.style.transition = 'transform 220ms cubic-bezier(.4,0,.6,1), opacity 220ms ease';
+      m.style.transform = 'translateX(' + dx + 'px) scale(.72)';
+      m.style.opacity = '0.15';
+    });
+
+    showEquation(eq, why, fam.accent);
+
+    const roundRef = Game.round;
+    later(() => {
+      if (Game.round !== roundRef) return; // 动画期间重开了本关，丢弃这次结算
+      Game.journal.push({ text: eq, accent: fam.accent });
+      // 注意：这里不能清空 Game.solution。求解器给出的方案在消除之后依然有效；
+      // 清掉它会让提示被迫从当前中间局面重新求解，而那个局面本身可能已经无解
+      // （实测第 6 关就是这么丢掉最后两张 x 的）。缓存由 findHint 自己校验。
+      renderRail();
+      renderPanel();
+      const boardLeft = E.boardTiles(Game.round).length;
+      if (E.isRoundClear(Game.round)) {
+        onWin();
+      } else if (!boardLeft && Game.round.rail.length === 3) {
+        // 桌面已经没有牌了，卡槽里正好剩同类三张 —— 让收尾规则把它合掉
+        const rest = Game.round.rail.slice();
+        const done = [];
+        for (const t of rest) {
+          t.place = 'rail';
+          for (const c of E.railPush(Game.round.rail, t)) done.push(c);
+        }
+        for (const t of done) t.place = 'gone';
+        Game.round.rail = Game.round.rail.filter((t) => t.place === 'rail');
+        if (done.length) {
+          Game.journal.push({ text: E.equationText(done), accent: E.FAMILIES[done[0].familyId].accent });
+          Game.solution = null;
+          renderRail();
+          renderPanel();
+        }
+        onWin();
+      } else if (!boardLeft) {
+        // 桌面清空但卡槽里剩下的是异族散牌：这一局没打完，引导重开
+        onDead();
+      } else {
+        Game.status = 'playing';
+        refreshBoard();
+        if (gameStuck()) onDead();
+      }
+    }, 620);
+  }
+
+  function showEquation(eq, why, accent) {
+    const card = $('#eqcard');
+    card.dataset.accent = accent;
+    $('#eq-formula').textContent = eq;
+    $('#eq-why').textContent = why;
+    card.classList.remove('is-show');
+    void card.offsetWidth;
+    card.classList.add('is-show');
+    clearTimeout(showEquation._t);
+    showEquation._t = later(() => card.classList.remove('is-show'), 3000);
+  }
+
+  function shake(el) {
+    if (!el) return;
+    el.classList.remove('is-shake');
+    void el.offsetWidth;
+    el.classList.add('is-shake');
+    later(() => el.classList.remove('is-shake'), 420);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 道具：撤销 / 提示
+   * ------------------------------------------------------------------ */
+  function undo() {
+    if (Game.status !== 'playing' || !Game.history.length) {
+      toast('没有可以撤销的操作', 'warn');
+      return;
+    }
+    const last = Game.history.pop();
+    const tile = Game.round.tiles.filter((t) => t.id === last.id)[0];
+    // 把这张牌从卡槽收回桌面
+    Game.solution = null;
+    const i = Game.round.rail.indexOf(tile);
+    if (i >= 0) Game.round.rail.splice(i, 1);
+    tile.place = 'board';
+    Game.round.rail.forEach((t, k) => (t.railIndex = k));
+    Sound.tap();
+    renderRail();
+    refreshBoard();
+    renderPanel();
+    setStatusLine('撤销成功，再想想放哪张');
+    $$('.tile').forEach((el) => el.classList.remove('is-hint'));
+    hideGhosts();
+  }
+
+  function hint() {
+    if (Game.status !== 'playing') return;
+    const h = E.findHint(Game.round, Game.solution);
+    if (h && h.solution) Game.solution = h.solution;
+    if (!h) {
+      Sound.bad();
+      toast('暂时没有能凑的同类项，先用「撤销」腾出卡槽', 'warn');
+      return;
+    }
+    Game.hints++;
+    Sound.tap();
+    $$('.tile').forEach((el) => el.classList.remove('is-hint'));
+    hideGhosts();
+    const fam = E.FAMILIES[h.familyId];
+    h.tiles.forEach((t) => {
+      if (t.el) t.el.classList.add('is-hint');
+    });
+    Game.round.rail.forEach((t) => {
+      if (t.slotEl && t.familyId === h.familyId) t.slotEl.classList.add('is-hint');
+    });
+    const need = 3 - h.fromRail;
+    const railText = h.fromRail ? '卡槽里已经有 ' + h.fromRail + ' 张，' : '';
+    const part = E.letterPart(fam.powers) || '常数项';
+    if (h.kind === 'triple' && h.fromRail === 0 && h.tiles.length > 1) {
+      setStatusLine('提示：把桌上这三张「' + part + '」依次点进卡槽，它们就能合并');
+    } else if (h.kind === 'solver') {
+      setStatusLine('提示：这一步先放「' + h.tiles.map((t) => E.renderTerm(t.coef, t.powers)).join(' + ') + '」，卡槽就不会被堵住');
+    } else if (h.kind === 'single' || h.kind === 'pair') {
+      setStatusLine('提示：先把这张「' + E.renderTerm(h.tiles[0].coef, h.tiles[0].powers) + '」放进卡槽，它属于「' + part + '」');
+    } else {
+      setStatusLine('提示：' + railText + '再找出 ' + need + ' 张「' + part + '」放进去');
+    }
+    // 在空卡槽里显示目标虚影（只有明确要凑三张时才显示）
+    if (h.kind === 'finish' || h.kind === 'triple' || h.kind === 'solver') showGhosts(h.tiles.length, fam);
+    renderPanel();
+    later(() => {
+      $$('.tile').forEach((el) => el.classList.remove('is-hint'));
+      hideGhosts();
+    }, 4200);
+  }
+
+  function showGhosts(need, fam) {
+    const cells = $$('.slot', $('#rail'));
+    let placed = 0;
+    for (let i = Game.round.rail.length; i < cells.length && placed < need; i++, placed++) {
+      const g = document.createElement('div');
+      g.className = 'ghost';
+      g.dataset.accent = fam.accent;
+      // 常数项没有字母部分，就显示一个点，避免把「常数项」三个字硬塞进小方格
+      const ghostText = E.letterPart(fam.powers) || '·';
+      g.innerHTML = '<span class="ghost-letters">' + ghostText + '</span>';
+      cells[i].appendChild(g);
+    }
+  }
+
+  function hideGhosts() {
+    $$('.ghost').forEach((g) => g.remove());
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 判负（卡槽满且走不动）/ 通关
+   * ------------------------------------------------------------------ */
+  function gameStuck() {
+    if (!E.boardTiles(Game.round).length) return false;
+    // 还有牌可以点 → 就还没死，最多是卡槽要满了
+    return E.accessibleTiles(Game.round).length === 0;
+  }
+
+  function onDead() {
+    Game.status = 'dead';
+    Sound.bad();
+    $('#overlay-kind').textContent = '卡槽满了';
+    $('#overlay-title').textContent = '先把牌退回来';
+    $('#overlay-sub').textContent =
+      '卡槽里的牌不是同类项，暂时合并不了。点「撤销」把最后一张放回桌面，换个顺序试试。';
+    $('#overlay-answer').textContent = '';
+    showOverlay({
+      primary: { label: '撤销一张', action: () => { hideOverlay(); undo(); } },
+      ghost: { label: '重开本关', action: () => { hideOverlay(); startLevel(Game.levelId); } },
+    });
+  }
+
+  function onWin() {
+    Game.status = 'won';
+    clearInterval(Game.timer);
+    clearInterval(Game.timer);
+    Sound.win();
+    const cfg = Game.meta;
+    const stars = E.starsFor(cfg, Game.seconds, Game.hints);
+    const prev = Game.progress[cfg.id];
+    Game.progress[cfg.id] = {
+      stars: prev ? Math.max(prev.stars, stars) : stars,
+      best: prev && prev.best ? Math.min(prev.best, Game.seconds) : Game.seconds,
+    };
+    Game.unlocked = Math.max(Game.unlocked, Math.min(E.LEVELS.length, cfg.id + 1));
+    saveProgress();
+    $('#overlay-kind').textContent = '合并完成';
+    $('#overlay-title').textContent = cfg.name + ' \u2713';
+    $('#overlay-sub').textContent =
+      '用时 ' + fmtTime(Game.seconds) + '，用了 ' + Game.hints + ' 次提示。最终答案：';
+    $('#overlay-answer').innerHTML =
+      '<span class="ans">' + Game.round.answer + '</span>' +
+      '<span class="ans-note">' + E.LEVELS[Game.levelId - 1].brief + '</span>';
+    const nextId = cfg.id < E.LEVELS.length ? cfg.id + 1 : null;
+    showOverlay({
+      primary: nextId
+        ? { label: '下一关 ' + nextId, action: () => { hideOverlay(); startLevel(nextId); } }
+        : { label: '再玩一次', action: () => { hideOverlay(); startLevel(1); } },
+      ghost: { label: '重玩本关', action: () => { hideOverlay(); startLevel(cfg.id); } },
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 弹层 & 帮助
+   * ------------------------------------------------------------------ */
+  function showOverlay(opts) {
+    const ov = $('#overlay');
+    ov.classList.add('is-show');
+    const p = $('#overlay-primary');
+    const g = $('#overlay-ghost');
+    p.textContent = opts.primary.label;
+    p.onclick = opts.primary.action;
+    g.textContent = opts.ghost.label;
+    g.onclick = opts.ghost.action;
+    renderStarsTo($('#overlay-stars'), E.starsFor(Game.meta, Game.seconds, Game.hints));
+  }
+
+  function hideOverlay() {
+    $('#overlay').classList.remove('is-show');
+  }
+
+  function renderStarsTo(el, stars) {
+    el.innerHTML = '';
+    for (let i = 0; i < 3; i++) {
+      const s = document.createElement('span');
+      s.className = 'star big' + (i < stars ? ' is-on' : '');
+      s.textContent = '\u2605';
+      el.appendChild(s);
+    }
+  }
+
+  function toggleHelp(force) {
+    const panel = $('#help');
+    const show = force == null ? !panel.classList.contains('is-show') : force;
+    panel.classList.toggle('is-show', show);
+  }
+
+  /**
+   * 真正开始这一局。
+   * 首屏只是「先读规则」的待机状态，无论学生点「开始合并」还是「先看看牌桌」，
+   * 只要规则面板关掉了，就必须把游戏激活 —— 否则牌桌是死的，
+   * 学生只能反复打开规则面板，进退两难。
+   */
+  function beginPlay() {
+    if (Game.status === 'idle') {
+      Game.status = 'playing';
+      Game.seconds = 0;
+      $('#timer').textContent = fmtTime(0);
+      refreshBoard();
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 存档
+   * ------------------------------------------------------------------ */
+  function saveProgress() {
+    try {
+      window.localStorage.setItem(
+        'like-terms-progress',
+        JSON.stringify({ progress: Game.progress, unlocked: Game.unlocked })
+      );
+    } catch (err) {
+      /* 隐私模式下 localStorage 可能不可用 */
+    }
+  }
+
+  function loadProgress() {
+    try {
+      const raw = window.localStorage.getItem('like-terms-progress');
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (data && data.progress) Game.progress = data.progress;
+      if (data && data.unlocked) Game.unlocked = data.unlocked;
+    } catch (err) {
+      /* 忽略损坏的存档 */
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 事件绑定
+   * ------------------------------------------------------------------ */
+  function bind() {
+    $('#board').addEventListener('click', (ev) => {
+      const el = ev.target.closest('.tile');
+      if (!el) return;
+      const tile = Game.round.tiles.filter((t) => t.id === el.dataset.id)[0];
+      if (tile) drawTile(tile);
+    });
+
+    $('#answer-card').addEventListener('click', () => {
+      Game.answerRevealed = !Game.answerRevealed;
+      Sound.tap();
+      renderPanel();
+    });
+
+    $('#btn-undo').addEventListener('click', undo);
+    $('#btn-hint').addEventListener('click', hint);
+    $('#btn-restart').addEventListener('click', () => startLevel(Game.levelId));
+    $('#btn-help').addEventListener('click', () => toggleHelp());
+    // 点击规则面板的灰色背景也能关掉，避免学生「关不掉」
+    $('#help').addEventListener('click', (ev) => {
+      if (ev.target && ev.target.id === 'help') {
+        toggleHelp(false);
+        beginPlay();
+      }
+    });
+    // 两个按钮都只是「关掉规则面板」，关掉即开始，不存在只关不开始的情况
+    $('#help-close').addEventListener('click', () => {
+      toggleHelp(false);
+      beginPlay();
+    });
+    $('#help-start').addEventListener('click', () => {
+      toggleHelp(false);
+      beginPlay();
+    });
+
+    $('#btn-sound').addEventListener('click', (ev) => {
+      Sound.muted = !Sound.muted;
+      ev.currentTarget.classList.toggle('is-muted', Sound.muted);
+      ev.currentTarget.setAttribute('aria-pressed', String(!Sound.muted));
+      if (!Sound.muted) {
+        Sound.init();
+        Sound.tap();
+      }
+    });
+
+    $('#level-chips').addEventListener('click', (ev) => {
+      const chip = ev.target.closest('.chip');
+      if (!chip || chip.disabled) return;
+      startLevel(Number(chip.dataset.lv));
+    });
+
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') {
+        hideOverlay();
+        toggleHelp(false);
+      }
+      if (ev.key === 'u' || ev.key === 'U') undo();
+      if (ev.key === 'h' || ev.key === 'H') hint();
+      if (ev.key === 'r' || ev.key === 'R') startLevel(Game.levelId);
+      if (ev.key === ' ') {
+        ev.preventDefault();
+        hint();
+      }
+    });
+
+    // 手机 / 平板：把整个舞台等比缩放
+    const fit = () => {
+      const stage = $('#stage');
+      const pad = 12;
+      const w = Math.min(window.innerWidth - pad * 2, 1180);
+      const h = Math.min(window.innerHeight - pad * 2, 760);
+      const scale = Math.min(1, w / 1180, h / 760);
+      stage.style.transform = 'scale(' + scale + ')';
+      document.body.style.setProperty('--vb-pad', Math.round((760 - 760 * scale) / 2) + 'px');
+    };
+    window.addEventListener('resize', fit);
+    fit();
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 启动
+   * ------------------------------------------------------------------ */
+  function boot() {
+    if (!E) {
+      document.body.innerHTML =
+        '<p style="font:16px/1.6 sans-serif;padding:40px">游戏引擎加载失败，请确认 engine.js 与本文件在同一目录。</p>';
+      return;
+    }
+    loadProgress();
+    bind();
+    startLevel(1, Date.now() & 0xffffff);
+    // 首屏先读规则：把状态置回待机，点「开始合并」才真正开始计时与可点
+    Game.status = 'idle';
+    refreshBoard();
+    toggleHelp(true);
+    clearInterval(Game.timer);
+    Game.timer = setInterval(() => {
+      if (Game.status === 'playing') {
+        Game.seconds++;
+        $('#timer').textContent = fmtTime(Game.seconds);
+        if (Game.seconds % 5 === 0) renderStars();
+      }
+    }, 1000);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
+
+  // 暴露给自动化测试
+  window.LikeTermsGame = { Game, startLevel, drawTile, hint, undo, gameStuck, onWin, onDead, refreshBoard };
+})();
+
+})();
+</script>
+</body>
+</html>
